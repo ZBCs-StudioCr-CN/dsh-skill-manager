@@ -12,7 +12,13 @@ Apply:
 cd deepseek-harness
 git apply /path/to/dsh-skill-manager/host/0001-skill-manager-host.patch
 # on a drifted checkout: git apply --3way, resolve the few hunks manually
+# on Windows checkouts (CRLF line endings): git apply --ignore-space-change ...
 ```
+
+Verified: the patch applies cleanly to a pristine `deepseek-harness` HEAD tree
+(`git apply --ignore-space-change` on Windows; plain `git apply` on LF
+checkouts), producing 29 file changes including the new `writer.ts` and the
+tsconfig path mapping.
 
 ## What the patch changes
 
