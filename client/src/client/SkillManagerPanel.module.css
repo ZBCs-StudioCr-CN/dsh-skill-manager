@@ -1,0 +1,346 @@
+/* Sidebar-foot skill manager action and the panel it opens above the footer. */
+
+.layer {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 49px;
+  margin: 8px 0 0;
+}
+
+.footerButtons {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 49px;
+  padding: 0 8px 0 6px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.badge:hover {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+
+.badgeLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer.rail {
+  width: 36px;
+  height: 36px;
+  margin: 0;
+}
+
+.rail .badge {
+  justify-content: center;
+  gap: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.rail .footerButtons {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panel {
+  position: fixed;
+  left: 12px;
+  bottom: 128px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 420px;
+  max-width: calc(100vw - 24px);
+  max-height: 60vh;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-shadow-lv2);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 12px;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.note,
+.readError,
+.notice {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.readError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managed,
+.notManaged {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--dsw-alias-button-ghost-active-fill);
+  font-size: 11px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.rowDetail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.rowDescription {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.newButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.newButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+}
+
+.fieldInner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.fieldHint {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+}
+
+.input {
+  height: 30px;
+  padding: 0 8px;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 120px;
+  padding: 6px 8px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.formActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.primaryButton,
+.ghostButton,
+.dangerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.primaryButton {
+  border: none;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.ghostButton {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dangerButton {
+  border: none;
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.actionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.actionButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.actionButton:disabled,
+.primaryButton:disabled,
+.ghostButton:disabled,
+.dangerButton:disabled,
+.newButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.confirmMessage {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}

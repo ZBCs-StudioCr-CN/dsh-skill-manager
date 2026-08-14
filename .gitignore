@@ -1,0 +1,23 @@
+# dependencies / build artifacts
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# local env
+.env
+.env.local
+
+# git
+*.orig
+*.rej
+
+# temp patch artifacts
+/tmp/

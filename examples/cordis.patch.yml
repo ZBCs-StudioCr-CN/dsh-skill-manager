@@ -1,0 +1,12 @@
+# Bundle rows for the skill manager.
+#
+# Add the ui-skill-manager row to your web-app profile's `cordis.patch.yml`
+# (the same `- insert:` block where ui-skill / ui-cordis live). The modules
+# node-half scans these rows into `window.__DSH_BOOT__` at server startup;
+# without the row the shell never fetches the panel bundle.
+#
+#   - id: ui-skill-manager
+#     name: '@deepseek-ai/dsh-client-ui-skill-manager'
+#
+# Prerequisite: the host RPCs (skill.create/read/update/delete) must be present
+# in the harness build — apply host/0001-skill-manager-host.patch first.

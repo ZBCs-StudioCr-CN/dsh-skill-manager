@@ -1,0 +1,1406 @@
+﻿diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
+index 210ec0bf80..8652d38dcd 100644
+--- a/packages/api/remotes/src/client/index.ts
++++ b/packages/api/remotes/src/client/index.ts
+@@ -38,7 +38,8 @@ export type {
+   MessageId, ModelCatalogFailure, ModelProviderGroup, ModelReasoningEffort, ModelSelection,
+   MuxFrame, PromptContentPart, QuestionResponsePayload, QueueAction, RpcError, RpcId, RpcReceipt,
+   RpcRequest, RpcResponse, RpcResult, SessionId, SessionModels, SessionSearchItem,
+-  SessionSummary, SettingsNamespaceView, SettingsPathOpView, SkillEntry, StreamChunk,
++  SessionSummary, SettingsNamespaceView, SettingsPathOpView, SkillEntry, SkillDetail,
++  SkillWritePayload, SkillWriteResult, StreamChunk,
+   SubagentAddress, SubagentCatalog, JobView, ToolCallView, ToolEventView, ToolResultView,
+   WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-client-connection/client'
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index b06e63b54f..be5d9bbc33 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -230,6 +230,11 @@
+     - id: ui-skill
+       name: '@deepseek-ai/dsh-client-ui-skill'
+ 
++    # Sidebar skill manager: the footer-action button + panel that lists,
++    # creates, edits, and deletes user-owned SKILL.md files over skill.* RPCs.
++    - id: ui-skill-manager
++      name: '@deepseek-ai/dsh-client-ui-skill-manager'
++
+     - id: ui-subagent
+       name: '@deepseek-ai/dsh-client-ui-subagent'
+ 
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+index ca4709a2a9..981098a0f2 100644
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -73,6 +73,7 @@
+     "@deepseek-ai/dsh-client-ui-settings-general": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-sidebar": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-skill": "workspace:^",
++    "@deepseek-ai/dsh-client-ui-skill-manager": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-input-trigger": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-subagent": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-jobs": "workspace:^",
+diff --git a/packages/client/connection/src/client/api.ts b/packages/client/connection/src/client/api.ts
+index 1b7627b293..5675078832 100644
+--- a/packages/client/connection/src/client/api.ts
++++ b/packages/client/connection/src/client/api.ts
+@@ -10,7 +10,7 @@ export type {
+   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
+   DirectoryEntry, DirectoryListing,
+   ResponseValue, WorkspaceApi, WorkspaceId, WorkspaceView,
+-  SkillsApi, SkillEntry,
++  SkillsApi, SkillEntry, SkillDetail, SkillWritePayload, SkillWriteResult,
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+   ModelReasoningEffort, ModelSelection, QueueAction, QueuedInboxItem, SessionModels,
+   GoalsApi, GoalRef,
+diff --git a/packages/client/connection/src/client/fixture.ts b/packages/client/connection/src/client/fixture.ts
+index dd0566486e..d99dc6f420 100644
+--- a/packages/client/connection/src/client/fixture.ts
++++ b/packages/client/connection/src/client/fixture.ts
+@@ -34,7 +34,7 @@ import { deriveEventMessage, foldSurface } from '@deepseek-ai/dsh-session/surfac
+ import type {
+   ApiProxy, ClientRequest, ClientResponse, HistoryEntry, HostFrame, MuxFrame, RpcReceipt,
+   ModelProviderGroup, ModelSelection, RpcRequest, RpcResponse, RpcResult, ServerRequest, ServerResponse, SessionSummary,
+-  ToolCallView, ToolEventView, ToolResultView, WorkspaceId, WorkspaceView,
++  SkillDetail, ToolCallView, ToolEventView, ToolResultView, WorkspaceId, WorkspaceView,
+ } from './api.ts'
+ import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api'
+ import { AbstractApiClient, RpcId, SESSION_SEARCH_RESULT_LIMIT } from './api.ts'
+@@ -46,6 +46,19 @@ function rpcRequest<P>(payload: P): RpcRequest<P> {
+   return { rpcId: RpcId(randomUuid()), payload }
+ }
+ 
++/** Default skills seeded into a fresh fixture skill manager (all user-owned and editable). */
++const FIXTURE_SKILLS: readonly SkillDetail[] = [
++  { name: 'fixture-demo', description: 'fixture 技能样本', whenToUse: '仅供 UI 目录渲染验收', modelInvocable: true, userInvocable: true, body: 'Fixture demo instructions.' },
++  { name: 'fixture-user-only', description: 'fixture 仅用户技能样本', modelInvocable: false, userInvocable: true, body: 'Fixture user-only instructions.' },
++]
++
++/** In-memory skill store backing the fixture manager's create/read/update/delete. */
++const fixtureSkillStore = new Map<string, SkillDetail>(FIXTURE_SKILLS.map(skill => [skill.name, skill]))
++
++function existingFixtureSkill(name: string): SkillDetail | undefined {
++  return fixtureSkillStore.get(name)
++}
++
+ function text(t: string): ContentBlock[] {
+   return [{ type: 'text', text: t }]
+ }
+@@ -2783,11 +2796,51 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+         if (missing !== undefined) return missing
+         return ok(request, {
+           skills: [
+-            { name: 'fixture-demo', description: 'fixture 技能样本', whenToUse: '仅供 UI 目录渲染验收', modelInvocable: true },
+-            { name: 'fixture-user-only', description: 'fixture 仅用户技能样本', modelInvocable: false },
++            ...(fixtureSkillStore.size === 0 ? FIXTURE_SKILLS : [...fixtureSkillStore.values()]).map(skill => ({
++              name: skill.name,
++              description: skill.description,
++              ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
++              modelInvocable: skill.modelInvocable,
++              editable: true,
++            })),
+           ],
+         })
+       },
++      read: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        const skill = existingFixtureSkill(request.payload.name)
++        if (skill === undefined) return err(request, { code: 'skill-not-found', message: `skill "${request.payload.name}" is not a user-owned skill to read`, details: { name: request.payload.name } })
++        return ok(request, { skill })
++      },
++      create: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        const name = request.payload.name
++        const skill = { name, ...request.payload.skill }
++        if (fixtureSkillStore.has(name)) {
++          return err(request, { code: 'skill-conflict', message: `skill-filesystem: skill "${name}" already exists`, details: { name, reason: 'duplicate on create' } })
++        }
++        fixtureSkillStore.set(name, skill)
++        return ok(request, { name, path: `/fixture/skills/${name}/SKILL.md` })
++      },
++      update: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        if (!fixtureSkillStore.has(request.payload.name)) {
++          return err(request, { code: 'skill-not-found', message: `skill-filesystem: skill "${request.payload.name}" does not exist`, details: { name: request.payload.name } })
++        }
++        fixtureSkillStore.set(request.payload.name, { name: request.payload.name, ...request.payload.skill })
++        return ok(request, { name: request.payload.name, path: `/fixture/skills/${request.payload.name}/SKILL.md` })
++      },
++      delete: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        if (!fixtureSkillStore.delete(request.payload.name)) {
++          return err(request, { code: 'skill-not-found', message: `skill-filesystem: skill "${request.payload.name}" does not exist`, details: { name: request.payload.name } })
++        }
++        return ok(request, { deleted: true })
++      },
+     },
+     goals: {
+       // Compatibility face only: old API Proxy payloads and acknowledgements
+@@ -3106,6 +3159,10 @@ export class FixtureApiClient extends AbstractApiClient {
+       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
+       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+       case 'skill.list': return this.api.skills.list(request)
++      case 'skill.read': return this.api.skills.read(request)
++      case 'skill.create': return this.api.skills.create(request)
++      case 'skill.update': return this.api.skills.update(request)
++      case 'skill.delete': return this.api.skills.delete(request)
+       case 'agentPreset.list': return this.api.agentPresets.list(request)
+       case 'agentPreset.select': return this.api.agentPresets.select(request)
+       case 'agentPreset.read': return this.api.agentPresets.read(request)
+diff --git a/packages/client/connection/src/client/index.ts b/packages/client/connection/src/client/index.ts
+index c4470b13aa..93ec0751ff 100644
+--- a/packages/client/connection/src/client/index.ts
++++ b/packages/client/connection/src/client/index.ts
+@@ -18,7 +18,7 @@ export type {
+   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
+   DirectoryEntry, DirectoryListing,
+   ToolCallView, ToolResultView, WorkspaceApi, WorkspaceId, WorkspaceView,
+-  SkillsApi, SkillEntry,
++  SkillsApi, SkillEntry, SkillDetail, SkillWritePayload, SkillWriteResult,
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+   MessageId, ModelReasoningEffort, ModelSelection, QueueAction, QueuedInboxItem, SessionModels,
+   SubagentsApi, SubagentAddress, SubagentCatalog, SubagentListEntry, SubagentPromptReceipt,
+diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
+index 35084918e8..bd069d4002 100644
+--- a/packages/client/connection/src/index.ts
++++ b/packages/client/connection/src/index.ts
+@@ -115,6 +115,14 @@ const PRIVILEGED_METHODS = new Set([
+   'credentials.describe',
+   'credentials.set',
+   'credentials.unset',
++  // Skill manager authoring rewrites user-owned SKILL.md files on the host and
++  // read returns their full body, so both the mutation and content-read verbs
++  // are pinned the same way agentPreset.read/copy/remove are; the read-only
++  // `skill.list` catalog stays available to LAN pickers.
++  'skill.read',
++  'skill.create',
++  'skill.update',
++  'skill.delete',
+   'llm.discoverModels',
+ ])
+ 
+diff --git a/packages/client/connection/tests/fake-api.client.ts b/packages/client/connection/tests/fake-api.client.ts
+index bee4fc0ce0..0d1768f97e 100644
+--- a/packages/client/connection/tests/fake-api.client.ts
++++ b/packages/client/connection/tests/fake-api.client.ts
+@@ -3,7 +3,8 @@
+ // deferred-controlled timing). Streams are hand pumps: pushMux/pushHost.
+ import type {
+   HostFrame, IApiClient, ModelSelection, MuxFrame,
+-  RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillEntry, WorkspaceId,
++  RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillDetail, SkillEntry,
++  SkillWriteResult, WorkspaceId,
+ } from '../src/client/api.ts'
+ import { RpcId } from '../src/client/api.ts'
+ 
+@@ -174,6 +175,18 @@ export class FakeApiClient implements IApiClient {
+   onSkillList: (payload: unknown) => Promise<RpcResponse<{ skills: SkillEntry[] }>>
+     = () => Promise.resolve(ok({ skills: [] }))
+ 
++  onSkillRead: (payload: unknown) => Promise<RpcResponse<{ skill: SkillDetail }>>
++    = () => Promise.resolve(ok({ skill: { name: 'fixture', description: '', modelInvocable: true, userInvocable: true, body: '' } }))
++
++  onSkillCreate: (payload: unknown) => Promise<RpcResponse<SkillWriteResult>>
++    = () => Promise.resolve(ok({ name: 'fixture', path: '/fixture/skills/fixture/SKILL.md' }))
++
++  onSkillUpdate: (payload: unknown) => Promise<RpcResponse<SkillWriteResult>>
++    = () => Promise.resolve(ok({ name: 'fixture', path: '/fixture/skills/fixture/SKILL.md' }))
++
++  onSkillDelete: (payload: unknown) => Promise<RpcResponse<{ deleted: true }>>
++    = () => Promise.resolve(ok({ deleted: true }))
++
+ 
+   readonly agentPresets: IApiClient['agentPresets'] = {
+     list: (payload: unknown) => this.record('agentPreset.list', payload, Promise.resolve(ok({ presets: [], authorable: false, hasDocument: false }))),
+@@ -193,6 +206,10 @@ export class FakeApiClient implements IApiClient {
+ 
+   readonly skills: IApiClient['skills'] = {
+     list: (payload: unknown) => this.record('skill.list', payload, this.onSkillList(payload)),
++    read: (payload: unknown) => this.record('skill.read', payload, this.onSkillRead(payload)),
++    create: (payload: unknown) => this.record('skill.create', payload, this.onSkillCreate(payload)),
++    update: (payload: unknown) => this.record('skill.update', payload, this.onSkillUpdate(payload)),
++    delete: (payload: unknown) => this.record('skill.delete', payload, this.onSkillDelete(payload)),
+   }
+ 
+   readonly goals: IApiClient['goals'] = {
+diff --git a/packages/client/runtime/tests/fake-api.client.ts b/packages/client/runtime/tests/fake-api.client.ts
+index 33a0efbbfd..f1ed4a92d6 100644
+--- a/packages/client/runtime/tests/fake-api.client.ts
++++ b/packages/client/runtime/tests/fake-api.client.ts
+@@ -4,6 +4,7 @@
+ import type {
+   ClientResponse, HostFrame, IApiClient, ModelSelection, MuxFrame,
+   RpcError, RpcReceipt, RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillEntry,
++  SkillDetail, SkillWriteResult,
+   WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-api-remotes/client'
+ import { RpcId } from '@deepseek-ai/dsh-client-connection/client'
+@@ -227,6 +228,18 @@ export class FakeApiClient implements IApiClient {
+   onSkillList: (payload: unknown) => Promise<RpcResponse<{ skills: SkillEntry[] }>>
+     = () => Promise.resolve(ok({ skills: [] }))
+ 
++  onSkillRead: (payload: unknown) => Promise<RpcResponse<{ skill: SkillDetail }>>
++    = () => Promise.resolve(ok({ skill: { name: 'fixture', description: '', modelInvocable: true, userInvocable: true, body: '' } }))
++
++  onSkillCreate: (payload: unknown) => Promise<RpcResponse<SkillWriteResult>>
++    = () => Promise.resolve(ok({ name: 'fixture', path: '/fixture/skills/fixture/SKILL.md' }))
++
++  onSkillUpdate: (payload: unknown) => Promise<RpcResponse<SkillWriteResult>>
++    = () => Promise.resolve(ok({ name: 'fixture', path: '/fixture/skills/fixture/SKILL.md' }))
++
++  onSkillDelete: (payload: unknown) => Promise<RpcResponse<{ deleted: true }>>
++    = () => Promise.resolve(ok({ deleted: true }))
++
+ 
+   readonly agentPresets: IApiClient['agentPresets'] = {
+     list: (payload: unknown) => this.record('agentPreset.list', payload, Promise.resolve(ok({ presets: [], authorable: false, hasDocument: false }))),
+@@ -246,6 +259,10 @@ export class FakeApiClient implements IApiClient {
+ 
+   readonly skills: IApiClient['skills'] = {
+     list: (payload: unknown) => this.record('skill.list', payload, this.onSkillList(payload)),
++    read: (payload: unknown) => this.record('skill.read', payload, this.onSkillRead(payload)),
++    create: (payload: unknown) => this.record('skill.create', payload, this.onSkillCreate(payload)),
++    update: (payload: unknown) => this.record('skill.update', payload, this.onSkillUpdate(payload)),
++    delete: (payload: unknown) => this.record('skill.delete', payload, this.onSkillDelete(payload)),
+   }
+ 
+   readonly goals: IApiClient['goals'] = {
+diff --git a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+index 0cd1f51cd2..c724c0d96c 100644
+--- a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
++++ b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+@@ -1539,6 +1539,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
+     slotInject: '',
+     declaredBy: 'an entry in \'sidebar\' (client-ui-sidebar), so it exists while that entry is mounted',
+     occupants: [
++      'client-ui-skill-manager SkillManagerPanel id \'skill-manager\'',
+       'client-ui-cordis CordisPanel id \'cordis-panel\'',
+     ],
+     replaceRisk: 'none',
+diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
+index bda99362b6..82a11baf68 100644
+--- a/packages/host/apiproxy/src/api-proxy.ts
++++ b/packages/host/apiproxy/src/api-proxy.ts
+@@ -22,6 +22,7 @@ import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-se
+ import { SubagentError } from '@deepseek-ai/dsh-subagent'
+ import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
+ import { isUserInvocable } from '@deepseek-ai/dsh-skill'
++import type { SkillProviderMutate, SkillSource } from '@deepseek-ai/dsh-skill'
+ import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
+ import {
+   workspaceDomainState, workspaceRecord, WorkspaceId as brandWorkspaceId,
+@@ -1025,6 +1026,65 @@ function presetError(agentPreset: string, error: unknown): RpcError {
+   return { code: 'internal', message: `agent preset "${agentPreset}": ${String(error)}`, details: {} }
+ }
+ 
++/**
++ * The skill manager authoring access for one request: the registered provider's
++ * writable mutator, or a wire error when the request has no live session, the
++ * composition mounts no skill registry, or no provider owns a user writable root.
++ * Authoring always targets the HOST user skills root; the session is only the
++ * authorization context, never a source of paths.
++ */
++type AuthoringAccess =
++  | { ok: true; mutate: SkillProviderMutate }
++  | { ok: false; error: RpcError }
++
++function resolveAuthoringRegistry(ctx: Context, request: RpcRequest<{ sessionId: SessionId }>): AuthoringAccess {
++  const session = ctx.sessions.get(request.payload.sessionId)
++  if (session === undefined) {
++    return {
++      ok: false,
++      error: {
++        code: 'session-not-found',
++        message: `session "${request.payload.sessionId}" not found (not attached)`,
++        details: { sessionId: request.payload.sessionId },
++      },
++    }
++  }
++  const registry = ctx.get('skills')
++  if (registry === undefined) {
++    return {
++      ok: false,
++      error: { code: 'internal', message: 'skill registry is absent: the host composition mounts no @deepseek-ai/dsh-skill', details: {} },
++    }
++  }
++  const mutate = registry.mutator()
++  if (mutate === undefined) {
++    return {
++      ok: false,
++      error: { code: 'skill-read-only', message: 'no user-writable skill root is mounted (no filesystem skill provider with authoring)', details: { reason: 'no writable root' } },
++    }
++  }
++  return { ok: true, mutate }
++}
++
++/** Whether a skill source resolves to a user-owned manifest the manager may author. */
++function isUserOwnedSource(source: SkillSource): boolean {
++  return source === 'user-dsh' || source === 'user-agents'
++}
++
++/** Map one skill authoring failure onto its wire code (authoring errors carry a stable code and name). */
++function skillWriteError(error: unknown): RpcError {
++  const record = typeof error === 'object' && error !== null ? error as Record<string, unknown> : {}
++  const code = record.code
++  const name = typeof record.skillName === 'string' ? record.skillName : ''
++  const message = error instanceof Error ? error.message : String(error)
++  if (code === 'skill-invalid-name' || code === 'skill-exists') {
++    return { code: 'skill-conflict', message, details: { name, reason: message } }
++  }
++  if (code === 'skill-not-found') return { code: 'skill-not-found', message, details: { name } }
++  if (code === 'skill-not-writable') return { code: 'skill-read-only', message, details: { reason: message } }
++  return { code: 'internal', message: `skill authoring failed: ${message}`, details: {} }
++}
++
+ class AgentPresetConflict extends Error {
+   constructor(
+     readonly sessionId: SessionId,
+@@ -3249,12 +3309,71 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+               description: skill.description,
+               ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
+               modelInvocable: skill.invocation.modelInvocable,
++              // Only user-owned files are the manager's to author; a project
++              // or bundled skill is read-only from the user's skill manager.
++              editable: isUserOwnedSource(skill.source),
+             })),
+           })
+         } catch (error: unknown) {
+           return err(request, { code: 'internal', message: `skill listing failed: ${String(error)}`, details: {} })
+         }
+       },
++
++      // Authoring targets the user skills root on the HOST, never a
++      // caller-supplied path. Every request still resolves a real session as
++      // its authorization context, then reaches the registry's global provider
++      // mutator (the host composition's filesystem provider).
++      async read(request) {
++        const access = resolveAuthoringRegistry(ctx, request)
++        if (!access.ok) return err(request, access.error)
++        const name = request.payload.name
++        try {
++          const input = await access.mutate.read(name)
++          if (input === undefined) {
++            return err(request, {
++              code: 'skill-not-found',
++              message: `skill "${name}" is not a user-owned skill to read`,
++              details: { name },
++            })
++          }
++          return ok(request, { skill: input })
++        } catch (errorValue: unknown) {
++          return err(request, { code: 'internal', message: `skill read failed: ${String(errorValue)}`, details: {} })
++        }
++      },
++
++      async create(request) {
++        const access = resolveAuthoringRegistry(ctx, request)
++        if (!access.ok) return err(request, access.error)
++        try {
++          const result = await access.mutate.create({ name: request.payload.name, ...request.payload.skill })
++          return ok(request, result)
++        } catch (errorValue: unknown) {
++          return err(request, skillWriteError(errorValue))
++        }
++      },
++
++      async update(request) {
++        const access = resolveAuthoringRegistry(ctx, request)
++        if (!access.ok) return err(request, access.error)
++        try {
++          const result = await access.mutate.update(request.payload.name, { name: request.payload.name, ...request.payload.skill })
++          return ok(request, result)
++        } catch (errorValue: unknown) {
++          return err(request, skillWriteError(errorValue))
++        }
++      },
++
++      async delete(request) {
++        const access = resolveAuthoringRegistry(ctx, request)
++        if (!access.ok) return err(request, access.error)
++        try {
++          await access.mutate.remove(request.payload.name)
++          return ok(request, { deleted: true })
++        } catch (errorValue: unknown) {
++          return err(request, skillWriteError(errorValue))
++        }
++      },
+     },
+ 
+     settings: {
+diff --git a/packages/host/apiproxy/src/api/index.ts b/packages/host/apiproxy/src/api/index.ts
+index b5e1d1ffd9..c3b183a1c4 100644
+--- a/packages/host/apiproxy/src/api/index.ts
++++ b/packages/host/apiproxy/src/api/index.ts
+@@ -54,7 +54,7 @@ export type {
+ } from './subagents.ts'
+ export type { JobView } from './jobs.ts'
+ export type { WorkspaceApi, WorkspaceId, WorkspaceView } from './workspace.ts'
+-export type { SkillsApi, SkillEntry } from './skills.ts'
++export type { SkillsApi, SkillEntry, SkillDetail, SkillWritePayload, SkillWriteResult } from './skills.ts'
+ export type { AgentPresetsApi, AgentPresetEntry } from './agent-presets.ts'
+ export type { EventsApi, MuxFrame, HostFrame, QueuedInboxItem, ToolCallView, ToolEventView, ToolResultView } from './events.ts'
+ export type { GoalsApi, GoalId, GoalRef } from './goals.ts'
+diff --git a/packages/host/apiproxy/src/api/rpc-map.ts b/packages/host/apiproxy/src/api/rpc-map.ts
+index 80dede1799..2bb49af2f0 100644
+--- a/packages/host/apiproxy/src/api/rpc-map.ts
++++ b/packages/host/apiproxy/src/api/rpc-map.ts
+@@ -51,6 +51,10 @@ export interface RpcMethodMap {
+   'workspace.insertSessionBefore': WorkspaceApi['insertSessionBefore']
+   'workspace.archiveSession': WorkspaceApi['archiveSession']
+   'skill.list': SkillsApi['list']
++  'skill.read': SkillsApi['read']
++  'skill.create': SkillsApi['create']
++  'skill.update': SkillsApi['update']
++  'skill.delete': SkillsApi['delete']
+   'agentPreset.list': AgentPresetsApi['list']
+   'agentPreset.select': AgentPresetsApi['select']
+   'agentPreset.read': AgentPresetsApi['read']
+diff --git a/packages/host/apiproxy/src/api/rpc.ts b/packages/host/apiproxy/src/api/rpc.ts
+index 134a39eba9..b5f822f036 100644
+--- a/packages/host/apiproxy/src/api/rpc.ts
++++ b/packages/host/apiproxy/src/api/rpc.ts
+@@ -98,6 +98,12 @@ export interface RpcErrorDetailsMap {
+   'subagent-not-resumable': { childSessionId: SessionId }
+   'subagent-unauthorized': { childSessionId: SessionId }
+   'subagent-delivery-unavailable': { childSessionId: SessionId }
++  /** A skill-authoring reference named no existing user-owned skill. */
++  'skill-not-found': { name: string }
++  /** A skill authoring payload was refused (invalid name, name already taken, or malformed content). */
++  'skill-conflict': { name: string; reason: string }
++  /** Skill authoring is impossible (no user-writable root mounted, or the provider is read-only). */
++  'skill-read-only': { reason: string }
+   'internal': {}
+ }
+ 
+diff --git a/packages/host/apiproxy/src/api/skills.schema.ts b/packages/host/apiproxy/src/api/skills.schema.ts
+index 747bf19bad..f947ec464c 100644
+--- a/packages/host/apiproxy/src/api/skills.schema.ts
++++ b/packages/host/apiproxy/src/api/skills.schema.ts
+@@ -1,20 +1,29 @@
+ /**
+  * skills domain zod schemas (names derived from map keys: skillListRequestSchema /
+- * skillListValueSchema).
++ * skillListValueSchema). The name grammar mirrors the host `isSkillName` rule:
++ * a name is a directory name host-side, so it is validated as a kebab-case path
++ * segment on the wire and never travels as a raw path from the client.
+  */
+ 
+ import { z } from 'zod'
+ import type { RequestPayload, ResponseValue } from './rpc-map.ts'
+ import type { Wire } from './rpc.schema.ts'
+ import { sessionIdSchema } from './sessions.schema.ts'
+-import type { SkillEntry } from './skills.ts'
++import type { SkillEntry, SkillWritePayload, SkillWriteResult } from './skills.ts'
++
++/** Kebab-case skill name grammar (mirrors @deepseek-ai/dsh-skill isSkillName). */
++const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
++
++/** A valid kebab-case skill name. */
++export const skillNameSchema = z.string().regex(SKILL_NAME)
+ 
+ /** SkillEntry row of skill.list. */
+ export const skillEntrySchema = z.object({
+-  name: z.string().min(1),
++  name: skillNameSchema,
+   description: z.string(),
+   whenToUse: z.string().optional(),
+   modelInvocable: z.boolean(),
++  editable: z.boolean(),
+ }) satisfies z.ZodType<Wire<SkillEntry>>
+ 
+ /** skill.list request payload. */
+@@ -26,3 +35,67 @@ export const skillListRequestSchema = z.object({
+ export const skillListValueSchema = z.object({
+   skills: z.array(skillEntrySchema),
+ }) satisfies z.ZodType<Wire<ResponseValue<'skill.list'>>>
++
++/** Editable SKILL.md authoring payload shared by skill.create / skill.update. */
++export const skillWritePayloadSchema = z.object({
++  description: z.string().min(1),
++  whenToUse: z.string().optional(),
++  modelInvocable: z.boolean(),
++  userInvocable: z.boolean(),
++  body: z.string(),
++}) satisfies z.ZodType<Wire<SkillWritePayload>>
++
++/** Shared `{ name, path }` acknowledgement of skill.create / skill.update. */
++const skillWriteResultValueSchema = z.object({
++  name: skillNameSchema,
++  path: z.string(),
++}) satisfies z.ZodType<Wire<SkillWriteResult>>
++
++/** skill.read request payload. */
++export const skillReadRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  name: skillNameSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.read'>>>
++
++/** skill.read response value. */
++export const skillReadValueSchema = z.object({
++  skill: z.object({
++    name: skillNameSchema,
++    description: z.string(),
++    whenToUse: z.string().optional(),
++    modelInvocable: z.boolean(),
++    userInvocable: z.boolean(),
++    body: z.string(),
++  }),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.read'>>>
++
++/** skill.create request payload. */
++export const skillCreateRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  name: skillNameSchema,
++  skill: skillWritePayloadSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.create'>>>
++
++/** skill.create response value. */
++export const skillCreateValueSchema = skillWriteResultValueSchema satisfies z.ZodType<Wire<ResponseValue<'skill.create'>>>
++
++/** skill.update request payload. */
++export const skillUpdateRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  name: skillNameSchema,
++  skill: skillWritePayloadSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.update'>>>
++
++/** skill.update response value. */
++export const skillUpdateValueSchema = skillWriteResultValueSchema satisfies z.ZodType<Wire<ResponseValue<'skill.update'>>>
++
++/** skill.delete request payload. */
++export const skillDeleteRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  name: skillNameSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.delete'>>>
++
++/** skill.delete response value. */
++export const skillDeleteValueSchema = z.object({
++  deleted: z.literal(true),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.delete'>>>
+diff --git a/packages/host/apiproxy/src/api/skills.ts b/packages/host/apiproxy/src/api/skills.ts
+index 3b3e711a93..5b33064f88 100644
+--- a/packages/host/apiproxy/src/api/skills.ts
++++ b/packages/host/apiproxy/src/api/skills.ts
+@@ -18,6 +18,39 @@ export interface SkillEntry {
+   readonly whenToUse?: string
+   /** False marks a user-only skill (`disable-model-invocation`): invocable here, absent from the model catalog. */
+   readonly modelInvocable: boolean
++  /** Whether this skill resolves to a user-owned file the manager may edit or delete. */
++  readonly editable: boolean
++}
++
++/**
++ * Editable SKILL.md content the browser manager form reads and writes. This is
++ * the entire frontmatter + body the host persists into the user skills root;
++ * unlike the read catalog row it carries invocation state and the body text.
++ */
++export interface SkillDetail {
++  /** Kebab-case identifier; becomes the skill directory name. */
++  readonly name: string
++  /** Short routing description (required frontmatter). */
++  readonly description: string
++  /** Optional extra routing guidance. */
++  readonly whenToUse?: string
++  /** False writes `disable-model-invocation: true`. */
++  readonly modelInvocable: boolean
++  /** False writes `user-invocable: false`. */
++  readonly userInvocable: boolean
++  /** Markdown instruction body (without frontmatter). */
++  readonly body: string
++}
++
++/** Authoring payload for skill.create / skill.update. */
++export type SkillWritePayload = Omit<SkillDetail, 'name'>
++
++/** Acknowledgement of a persisted SKILL.md, including the on-host path. */
++export interface SkillWriteResult {
++  /** The kebab-case skill name just written. */
++  readonly name: string
++  /** Absolute SKILL.md path on the host. */
++  readonly path: string
+ }
+ 
+ /**
+@@ -30,4 +63,16 @@ export interface SkillEntry {
+ export interface SkillsApi {
+   /** Lists the user-invocable skill catalog for the session's project. */
+   list(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<{ skills: readonly SkillEntry[] }>>
++
++  /** Read one user-owned skill's full editable content. */
++  read(request: RpcRequest<{ sessionId: SessionId; name: string }>): Promise<RpcResponse<{ skill: SkillDetail }>>
++
++  /** Create a new user-owned skill from a name plus full SKILL.md authoring payload. */
++  create(request: RpcRequest<{ sessionId: SessionId; name: string; skill: SkillWritePayload }>): Promise<RpcResponse<SkillWriteResult>>
++
++  /** Overwrite an existing user-owned skill. */
++  update(request: RpcRequest<{ sessionId: SessionId; name: string; skill: SkillWritePayload }>): Promise<RpcResponse<SkillWriteResult>>
++
++  /** Delete a user-owned skill. */
++  delete(request: RpcRequest<{ sessionId: SessionId; name: string }>): Promise<RpcResponse<{ deleted: true }>>
+ }
+diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
+index 70e3ece58f..ae8ddfa160 100644
+--- a/packages/host/apiproxy/src/fetch/client.ts
++++ b/packages/host/apiproxy/src/fetch/client.ts
+@@ -40,7 +40,10 @@ import {
+   workspaceListValueSchema,
+   workspaceRenameValueSchema,
+ } from '../api/workspace.schema.ts'
+-import { skillListValueSchema } from '../api/skills.schema.ts'
++import {
++  skillCreateValueSchema, skillDeleteValueSchema, skillListValueSchema,
++  skillReadValueSchema, skillUpdateValueSchema,
++} from '../api/skills.schema.ts'
+ import {
+   agentPresetCopyValueSchema, agentPresetListValueSchema, agentPresetOpenDocumentValueSchema,
+   agentPresetReadValueSchema, agentPresetRemoveValueSchema, agentPresetSelectValueSchema,
+@@ -123,6 +126,10 @@ export interface IApiClient {
+   }
+   skills: {
+     list(payload: RequestPayload<'skill.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.list'>>>
++    read(payload: RequestPayload<'skill.read'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.read'>>>
++    create(payload: RequestPayload<'skill.create'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.create'>>>
++    update(payload: RequestPayload<'skill.update'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.update'>>>
++    delete(payload: RequestPayload<'skill.delete'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.delete'>>>
+   }
+   agentPresets: {
+     list(payload: RequestPayload<'agentPreset.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.list'>>>
+@@ -199,6 +206,10 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
+   'workspace.insertSessionBefore': workspaceInsertSessionBeforeValueSchema,
+   'workspace.archiveSession': workspaceArchiveSessionValueSchema,
+   'skill.list': skillListValueSchema,
++  'skill.read': skillReadValueSchema,
++  'skill.create': skillCreateValueSchema,
++  'skill.update': skillUpdateValueSchema,
++  'skill.delete': skillDeleteValueSchema,
+   'agentPreset.list': agentPresetListValueSchema,
+   'agentPreset.select': agentPresetSelectValueSchema,
+   'agentPreset.read': agentPresetReadValueSchema,
+@@ -455,6 +466,10 @@ export abstract class AbstractApiClient implements IApiClient {
+ 
+   readonly skills: IApiClient['skills'] = {
+     list: (payload, signal) => this.callUnary('skill.list', payload, signal),
++    read: (payload, signal) => this.callUnary('skill.read', payload, signal),
++    create: (payload, signal) => this.callUnary('skill.create', payload, signal),
++    update: (payload, signal) => this.callUnary('skill.update', payload, signal),
++    delete: (payload, signal) => this.callUnary('skill.delete', payload, signal),
+   }
+ 
+   // Annotated like every sibling, and load-bearing rather than cosmetic:
+diff --git a/packages/host/apiproxy/src/fetch/handler.ts b/packages/host/apiproxy/src/fetch/handler.ts
+index 697171ec53..aef614d41b 100644
+--- a/packages/host/apiproxy/src/fetch/handler.ts
++++ b/packages/host/apiproxy/src/fetch/handler.ts
+@@ -43,7 +43,10 @@ import {
+   workspaceListRequestSchema,
+   workspaceRenameRequestSchema,
+ } from '../api/workspace.schema.ts'
+-import { skillListRequestSchema } from '../api/skills.schema.ts'
++import {
++  skillCreateRequestSchema, skillDeleteRequestSchema, skillListRequestSchema,
++  skillReadRequestSchema, skillUpdateRequestSchema,
++} from '../api/skills.schema.ts'
+ import {
+   agentPresetCopyRequestSchema, agentPresetListRequestSchema, agentPresetOpenDocumentRequestSchema,
+   agentPresetReadRequestSchema, agentPresetRemoveRequestSchema, agentPresetSelectRequestSchema,
+@@ -117,6 +120,10 @@ const UNARY_ROUTES: UnaryRoutes = {
+   'workspace.insertSessionBefore': { schema: workspaceInsertSessionBeforeRequestSchema, invoke: (api, r) => api.workspace.insertSessionBefore(r) },
+   'workspace.archiveSession': { schema: workspaceArchiveSessionRequestSchema, invoke: (api, r) => api.workspace.archiveSession(r) },
+   'skill.list': { schema: skillListRequestSchema, invoke: (api, r) => api.skills.list(r) },
++  'skill.read': { schema: skillReadRequestSchema, invoke: (api, r) => api.skills.read(r) },
++  'skill.create': { schema: skillCreateRequestSchema, invoke: (api, r) => api.skills.create(r) },
++  'skill.update': { schema: skillUpdateRequestSchema, invoke: (api, r) => api.skills.update(r) },
++  'skill.delete': { schema: skillDeleteRequestSchema, invoke: (api, r) => api.skills.delete(r) },
+   'agentPreset.list': { schema: agentPresetListRequestSchema, invoke: (api, r) => api.agentPresets.list(r) },
+   'agentPreset.select': { schema: agentPresetSelectRequestSchema, invoke: (api, r) => api.agentPresets.select(r) },
+   'agentPreset.read': { schema: agentPresetReadRequestSchema, invoke: (api, r) => api.agentPresets.read(r) },
+diff --git a/packages/host/apiproxy/tests/client-handler.spec.ts b/packages/host/apiproxy/tests/client-handler.spec.ts
+index 4130d8f210..421efda063 100644
+--- a/packages/host/apiproxy/tests/client-handler.spec.ts
++++ b/packages/host/apiproxy/tests/client-handler.spec.ts
+@@ -89,7 +89,14 @@ function scriptedApi(overrides: {
+       insertSessionBefore: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
+       archiveSession: r => ok(r, { archivedSessionIds: [r.payload.sessionId] }),
+     },
+-    skills: { list: r => ok(r, { skills: [] }), ...overrides.skills },
++    skills: {
++      list: r => ok(r, { skills: [] }),
++      read: r => ok(r, { skill: { name: r.payload.name, description: '', modelInvocable: true, userInvocable: true, body: '' } }),
++      create: r => ok(r, { name: r.payload.name, path: `/t/skills/${r.payload.name}/SKILL.md` }),
++      update: r => ok(r, { name: r.payload.name, path: `/t/skills/${r.payload.name}/SKILL.md` }),
++      delete: r => ok(r, { deleted: true as const }),
++      ...overrides.skills,
++    },
+     agentPresets: {
+       list: r => ok(r, { presets: [], authorable: false, hasDocument: false }),
+       select: r => ok(r, { agentPreset: r.payload.agentPreset }),
+diff --git a/packages/host/apiproxy/tests/fetch-carrier.spec.ts b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+index 2000f708ba..e1c949064c 100644
+--- a/packages/host/apiproxy/tests/fetch-carrier.spec.ts
++++ b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+@@ -220,7 +220,19 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
+     },
+     skills: {
+       async list(request) {
+-        return { rpcId: request.rpcId, result: { ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true }] } } }
++        return { rpcId: request.rpcId, result: { ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true, editable: true }] } } }
++      },
++      async read(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { skill: { name: request.payload.name, description: '', modelInvocable: true, userInvocable: true, body: '' } } } }
++      },
++      async create(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { name: request.payload.name, path: `/t/skills/${request.payload.name}/SKILL.md` } } }
++      },
++      async update(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { name: request.payload.name, path: `/t/skills/${request.payload.name}/SKILL.md` } } }
++      },
++      async delete(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { deleted: true as const } } }
+       },
+     },
+     goals: {
+@@ -427,7 +439,7 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
+   it('round-trips skill.list through the wire form', async () => {
+     const c = client()
+     const skills = await c.skills.list({ sessionId: 's' as never })
+-    expect(skills.result).toEqual({ ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true }] } })
++    expect(skills.result).toEqual({ ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true, editable: true }] } })
+   })
+ 
+   it('lets host.pickDirectory finish after the 30-second default unary deadline', async () => {
+diff --git a/packages/host/apiproxy/tests/rpc-schemas.spec.ts b/packages/host/apiproxy/tests/rpc-schemas.spec.ts
+index 66ae52f783..0988ea6391 100644
+--- a/packages/host/apiproxy/tests/rpc-schemas.spec.ts
++++ b/packages/host/apiproxy/tests/rpc-schemas.spec.ts
+@@ -415,15 +415,16 @@ describe('skills domain schemas', () => {
+     expect(() => skillListRequestSchema.parse({})).toThrow()
+     expect(skillListValueSchema.parse({ skills: [] }).skills).toEqual([])
+     const value = skillListValueSchema.parse({ skills: [
+-      { name: 'commit-helper', description: 'Git commits', whenToUse: 'when committing', modelInvocable: true },
+-      { name: 'bare', description: 'No guidance', modelInvocable: false },
++      { name: 'commit-helper', description: 'Git commits', whenToUse: 'when committing', modelInvocable: true, editable: true },
++      { name: 'bare', description: 'No guidance', modelInvocable: false, editable: true },
+     ] })
+     expect(value.skills[0]?.whenToUse).toBe('when committing')
+     expect(value.skills[1]?.whenToUse).toBeUndefined()
+     expect(value.skills[1]?.modelInvocable).toBe(false)
+-    expect(() => skillEntrySchema.parse({ name: '', description: 'd', modelInvocable: true })).toThrow()
+-    // modelInvocable is required wire data: an entry without it fails.
++    expect(() => skillEntrySchema.parse({ name: '', description: 'd', modelInvocable: true, editable: true })).toThrow()
++    // modelInvocable and editable are required wire data: an entry without them fails.
+     expect(() => skillEntrySchema.parse({ name: 'n', description: 'd' })).toThrow()
++    expect(() => skillEntrySchema.parse({ name: 'n', description: 'd', modelInvocable: true })).toThrow()
+   })
+ })
+ 
+diff --git a/packages/skill/skill-filesystem/package.json b/packages/skill/skill-filesystem/package.json
+index 426696c4ef..4488e876f5 100644
+--- a/packages/skill/skill-filesystem/package.json
++++ b/packages/skill/skill-filesystem/package.json
+@@ -40,6 +40,7 @@
+   },
+   "dependencies": {
+     "chokidar": "^5.0.0",
++    "@deepseek-ai/dsh-atomic-write": "workspace:^",
+     "@deepseek-ai/schemastery": "workspace:^",
+     "yaml": "^2.4.2"
+   },
+diff --git a/packages/skill/skill-filesystem/src/index.ts b/packages/skill/skill-filesystem/src/index.ts
+index 5bf1bf9816..5d9f911986 100644
+--- a/packages/skill/skill-filesystem/src/index.ts
++++ b/packages/skill/skill-filesystem/src/index.ts
+@@ -30,8 +30,11 @@ import {
+   type SkillProvider,
+   type SkillProviderControl,
+   type SkillProviderObservation,
++  type SkillProviderMutate,
+   type SkillSource,
++  type SkillWriteInput,
+ } from '@deepseek-ai/dsh-skill'
++import { createSkill, readSkill, removeSkill, updateSkill } from './writer.ts'
+ 
+ const PROJECT_DSH_RANK = 100
+ const PROJECT_AGENTS_RANK = 200
+@@ -150,6 +153,7 @@ export class FileSystemSkillProvider implements SkillProvider {
+   private readonly agentsHome: string
+   private readonly customSkillDirs: string[]
+   private readonly watchManager: SkillWatchManager
++  private readonly controlRef: SkillProviderControl
+   private readonly bundledSkillDir: string | undefined
+   private disposal: Promise<void> | undefined
+ 
+@@ -163,6 +167,7 @@ export class FileSystemSkillProvider implements SkillProvider {
+     this.dshHome = resolveDshHome(config.dshHome)
+     this.agentsHome = resolve(config.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'))
+     this.customSkillDirs = (config.customSkillDirs ?? []).map(root => resolve(root))
++    this.controlRef = control
+     this.watchManager = new SkillWatchManager(ctx, control.invalidate, resolveWatchConfig(config))
+     control.signal.addEventListener('abort', () => { void this.dispose() }, { once: true })
+     // The environment bundled root is a default root: an isolated provider
+@@ -238,6 +243,43 @@ export class FileSystemSkillProvider implements SkillProvider {
+     return this.disposal
+   }
+ 
++  /**
++   * SKILL.md authoring onto the user-dsh root. Only skills under this
++   * provider's user-owned root are writable; every write validates the name
++   * and synchronously invalidates the catalog so `skills/change` fires.
++   */
++  readonly mutate: SkillProviderMutate = {
++    create: async (input: SkillWriteInput) => {
++      const result = await createSkill(this.userSkillsRoot(), input)
++      this.invalidateAfterAuthoring()
++      return result
++    },
++    update: async (name: string, input: SkillWriteInput) => {
++      const result = await updateSkill(this.userSkillsRoot(), name, input)
++      this.invalidateAfterAuthoring()
++      return result
++    },
++    read: async (name: string) => {
++      return await readSkill(this.userSkillsRoot(), name)
++    },
++    remove: async (name: string) => {
++      await removeSkill(this.userSkillsRoot(), name)
++      this.invalidateAfterAuthoring()
++    },
++  }
++
++  private userSkillsRoot(): string {
++    return join(this.dshHome, 'skills')
++  }
++
++  private invalidateAfterAuthoring(): void {
++    // Authoring has already touched disk; the catalog must refresh regardless
++    // of whether the path matches the read-side filter (a removed skill
++    // directory does not end in `.md`). `control.invalidate` clears the
++    // catalog and fires `skills/change` while this exact registration is live.
++    this.controlRef.invalidate()
++  }
++
+   private async roots(cwd: string | undefined): Promise<SkillRoot[]> {
+     const roots: SkillRoot[] = []
+     if (this.includeDefaultRoots && cwd !== undefined) {
+diff --git a/packages/skill/skill-filesystem/src/writer.ts b/packages/skill/skill-filesystem/src/writer.ts
+new file mode 100644
+index 0000000000..beb6c9fce7
+--- /dev/null
++++ b/packages/skill/skill-filesystem/src/writer.ts
+@@ -0,0 +1,243 @@
++/**
++ * SKILL.md authoring for the local filesystem skill provider.
++ *
++ * Authoring is confined to the provider's user-owned `$DSH_HOME/skills` root —
++ * the same `user-dsh` root discovery already scans. Project and bundled roots
++ * are not writable targets: they belong to repositories or the deployment, and
++ * rewriting them from the GUI would surprise the project owner or an upgrade.
++ *
++ * The write target is deliberately derived from a validated skill name (the
++ * skill directory name), never from a caller-supplied path, so a malformed
++ * name cannot escape the skills root — the agent-presets authoring stance.
++ *
++ * @module @deepseek-ai/dsh-skill-filesystem/writer
++ */
++
++import { rm, readFile, stat } from 'node:fs/promises'
++import { join, resolve } from 'node:path'
++import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
++import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
++import { isSkillName, type SkillWriteInput, type SkillWriteResult } from '@deepseek-ai/dsh-skill'
++
++/** SKILL.md filename inside each skill directory. */
++export const SKILL_FILE = 'SKILL.md'
++
++/** Stable wire-visible authoring error code carried by writer rejections. */
++export type SkillAuthoringErrorCode =
++  | 'skill-invalid-name'
++  | 'skill-exists'
++  | 'skill-not-found'
++  | 'skill-not-writable'
++
++/** Base for authoring rejections so the host maps them to wire codes without importing this package. */
++class SkillAuthoringError extends Error {
++  constructor(
++    readonly code: SkillAuthoringErrorCode,
++    message: string,
++  ) {
++    super(message)
++    this.name = 'SkillAuthoringError'
++  }
++}
++
++/** A skill name that cannot be used as a directory under the skills root. */
++export class SkillNameInvalidError extends SkillAuthoringError {
++  constructor(
++    /** The rejected name. */
++    readonly skillName: string,
++  ) {
++    super(
++      'skill-invalid-name',
++      `skill-filesystem: skill name ${JSON.stringify(skillName)} must match `
++      + 'the kebab-case name grammar — the name is a directory name, so anything else could escape the skills root',
++    )
++  }
++}
++
++/** Authoring targeted a name that already occupies a directory. */
++export class SkillExistsError extends SkillAuthoringError {
++  constructor(
++    /** The name that is already taken. */
++    readonly skillName: string,
++  ) {
++    super('skill-exists', `skill-filesystem: skill '${skillName}' already exists — create never overwrites; delete it first or choose another name`)
++  }
++}
++
++/** A relative skill record reference requested no existing skill. */
++export class SkillNotFoundError extends SkillAuthoringError {
++  constructor(
++    /** The name that is absent. */
++    readonly skillName: string,
++  ) {
++    super('skill-not-found', `skill-filesystem: skill '${skillName}' does not exist in the user skills root`)
++  }
++}
++
++/** Attempted authoring where this deployment exposes no writable skills root. */
++export class SkillNotWritableError extends SkillAuthoringError {
++  constructor() {
++    super('skill-not-writable', 'skill-filesystem: authoring requires a user-dsh skills root under $DSH_HOME')
++  }
++}
++
++/**
++ * Serialize one skill into the frontmatter + body SKILL.md text the reader parses back.
++ * @param input - the skill content to persist.
++ * @returns the full SKILL.md document text.
++ */
++export function renderSkillMarkdown(input: SkillWriteInput): string {
++  const code = {
++    name: input.name,
++    description: input.description,
++    ...input.whenToUse !== undefined && input.whenToUse.length > 0 ? { whenToUse: input.whenToUse } : {},
++    ...input.modelInvocable ? {} : { 'disable-model-invocation': true },
++    ...input.userInvocable ? {} : { 'user-invocable': false },
++  }
++  const frontmatter = stringifyYaml(code).trimEnd()
++  const body = input.body.trim()
++  return `---\n${frontmatter}\n---\n\n${body}\n`
++}
++
++/**
++ * Read a user-owned skill's full editable content from the skills root.
++ * @param skillsRoot - the user-dsh skills root.
++ * @param name - the existing skill to read.
++ * @returns the parsed editable content, or `undefined` when the skill is absent.
++ */
++export async function readSkill(skillsRoot: string, name: string): Promise<SkillWriteInput | undefined> {
++  if (!isSkillName(name)) return undefined
++  const path = join(skillsRoot, name, SKILL_FILE)
++  let text: string
++  try {
++    text = await readFile(path, 'utf8')
++  } catch {
++    // Missing files are authoritative absence, matching discovery.
++    return undefined
++  }
++  const parsed = parseSkillMarkdown(text)
++  return parsed === undefined ? undefined : { name, ...parsed }
++}
++
++function parseSkillMarkdown(text: string): Omit<SkillWriteInput, 'name'> | undefined {
++  const headerEnd = text.indexOf('\n')
++  const header = text.slice(0, headerEnd < 0 ? undefined : headerEnd).replace(/\r$/, '')
++  if (header !== '---') return undefined
++  const start = headerEnd + 1
++  const closing = findClosingFrontmatter(text, start)
++  if (closing === undefined) return undefined
++  const yaml = text.slice(start, closing.start)
++  let data: unknown
++  try {
++    data = parseYaml(yaml)
++  } catch {
++    return undefined
++  }
++  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined
++  const record = data as Record<string, unknown>
++  const description = stringValue(record.description)
++  if (description === undefined) return undefined
++  return {
++    description,
++    ...optionalStringValue(record.whenToUse),
++    modelInvocable: !booleanValue(record['disable-model-invocation'], false),
++    userInvocable: booleanValue(record['user-invocable'], true),
++    body: text.slice(closing.bodyStart).trim(),
++  }
++}
++
++function stringValue(value: unknown): string | undefined {
++  return typeof value === 'string' && value.length > 0 ? value : undefined
++}
++
++function optionalStringValue(value: unknown): { whenToUse: string } | Record<string, never> {
++  const text = stringValue(value)
++  return text === undefined ? {} : { whenToUse: text }
++}
++
++function booleanValue(value: unknown, fallback: boolean): boolean {
++  if (typeof value === 'boolean') return value
++  return fallback
++}
++
++function findClosingFrontmatter(raw: string, start: number): { start: number; bodyStart: number } | undefined {
++  let lineStart = start
++  while (lineStart <= raw.length) {
++    const nextNewline = raw.indexOf('\n', lineStart)
++    const lineEnd = nextNewline < 0 ? raw.length : nextNewline
++    const line = raw.slice(lineStart, lineEnd).replace(/\r$/, '')
++    if (line === '---') {
++      return { start: lineStart, bodyStart: nextNewline < 0 ? raw.length : nextNewline + 1 }
++    }
++    if (nextNewline < 0) return undefined
++    lineStart = nextNewline + 1
++  }
++  return undefined
++}
++
++/**
++ * Whether a directory already exists under the skills root for this name.
++ * The reader treats a present directory as occupying the name, so authoring
++ * holds the same guard before it writes.
++ */
++async function occupied(skillsRoot: string, name: string): Promise<boolean> {
++  try {
++    await stat(join(skillsRoot, name))
++    return true
++  } catch {
++    // Any stat failure means nothing usable occupies the path; the write may claim it.
++    return false
++  }
++}
++
++/**
++ * Create a new skill directory under the user skills root.
++ * @param skillsRoot - the user-dsh skills root.
++ * @param input - the skill to persist.
++ * @returns the absolute SKILL.md path.
++ */
++export async function createSkill(skillsRoot: string, input: SkillWriteInput): Promise<SkillWriteResult> {
++  const dir = writableDirectory(skillsRoot, input.name)
++  if (await occupied(skillsRoot, input.name)) throw new SkillExistsError(input.name)
++  const path = join(dir, SKILL_FILE)
++  await writeFileAtomic(path, renderSkillMarkdown(input), { mode: 0o600, dirMode: 0o700 })
++  return { name: input.name, path }
++}
++
++/**
++ * Overwrite an existing skill's SKILL.md under the user skills root.
++ * @param skillsRoot - the user-dsh skills root.
++ * @param name - the existing skill to replace.
++ * @param input - the skill content to persist.
++ * @returns the absolute SKILL.md path.
++ */
++export async function updateSkill(skillsRoot: string, name: string, input: SkillWriteInput): Promise<SkillWriteResult> {
++  const dir = writableDirectory(skillsRoot, name)
++  if (!(await occupied(skillsRoot, name))) throw new SkillNotFoundError(name)
++  const path = join(dir, SKILL_FILE)
++  await writeFileAtomic(path, renderSkillMarkdown(input), { mode: 0o600, dirMode: 0o700 })
++  return { name, path }
++}
++
++/**
++ * Delete a skill directory under the user skills root.
++ * @param skillsRoot - the user-dsh skills root.
++ * @param name - the existing skill to remove.
++ */
++export async function removeSkill(skillsRoot: string, name: string): Promise<void> {
++  if (!isSkillName(name)) throw new SkillNameInvalidError(name)
++  const dir = writableDirectory(skillsRoot, name)
++  if (!(await occupied(skillsRoot, name))) throw new SkillNotFoundError(name)
++  await rmRecursive(dir)
++}
++
++function writableDirectory(skillsRoot: string, name: string): string {
++  if (skillsRoot.length === 0) throw new SkillNotWritableError()
++  if (!isSkillName(name)) throw new SkillNameInvalidError(name)
++  // Derive the target from the validated name; containment is structural.
++  return resolve(join(skillsRoot, name))
++}
++
++function rmRecursive(dir: string): Promise<void> {
++  return rm(dir, { recursive: true, force: true })
++}
+diff --git a/packages/skill/skill-filesystem/tests/skill-filesystem-writer.spec.ts b/packages/skill/skill-filesystem/tests/skill-filesystem-writer.spec.ts
+new file mode 100644
+index 0000000000..6b35f7d3d7
+--- /dev/null
++++ b/packages/skill/skill-filesystem/tests/skill-filesystem-writer.spec.ts
+@@ -0,0 +1,143 @@
++import { describe, expect, it } from 'vitest'
++import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { tmpdir } from 'node:os'
++import { Context } from '@deepseek-ai/cordis'
++import SkillRegistry from '@deepseek-ai/dsh-skill'
++import * as SkillFileSystem from '../src/index.ts'
++import { createSkill, SkillNameInvalidError, updateSkill, removeSkill, renderSkillMarkdown } from '../src/writer.ts'
++
++async function tempDir(name: string): Promise<string> {
++  return await import('node:fs/promises').then(fs => fs.mkdtemp(join(tmpdir(), `dsh-${name}-`)))
++}
++
++async function setupLocal(home: string): Promise<Context> {
++  const ctx = new Context()
++  await ctx.plugin(SkillRegistry)
++  await ctx.plugin(SkillFileSystem, {
++    dshHome: join(home, '.dsh'),
++    agentsHome: join(home, '.agents'),
++    watch: false,
++  })
++  return ctx
++}
++
++function input(over: Partial<Parameters<typeof renderSkillMarkdown>[0]> = {}) {
++  return {
++    name: 'my-skill',
++    description: 'A test skill',
++    modelInvocable: true,
++    userInvocable: true,
++    body: 'Instructions body.',
++    ...over,
++  }
++}
++
++function userSkillsRoot(home: string): string {
++  return join(home, '.dsh', 'skills')
++}
++
++function skillFilePath(home: string, name: string): string {
++  return join(userSkillsRoot(home), name, 'SKILL.md')
++}
++
++describe('skill writer helpers', () => {
++  it('renders a SKILL.md the reader parses back with invocation flags', async () => {
++    const rendered = renderSkillMarkdown(input({
++      name: 'color-swap',
++      description: 'Swap colors',
++      modelInvocable: false,
++      userInvocable: false,
++      whenToUse: 'When a swap is needed',
++    }))
++    expect(rendered).toContain(`name: color-swap`)
++    expect(rendered).toContain(`description: Swap colors`)
++    expect(rendered).toContain(`whenToUse: When a swap is needed`)
++    expect(rendered).toContain(`disable-model-invocation: true`)
++    expect(rendered).toContain(`user-invocable: false`)
++    expect(rendered.endsWith('\n')).toBe(true)
++  })
++
++  it('rejects a non-kebab name', async () => {
++    const root = await tempDir('skill-writer-bad-name')
++    await expect(createSkill(root, input({ name: 'Bad Name' }))).rejects.toThrow(SkillNameInvalidError)
++  })
++})
++
++describe('FileSystemSkillProvider mutation', () => {
++  it('exposes only the user skills root through ctx.skills.mutator()', async () => {
++    const home = await tempDir('skill-mutator')
++    const ctx = await setupLocal(home)
++    const mutate = ctx.skills.mutator()
++    expect(mutate).toBeDefined()
++  })
++
++  it('creates, reads back through the catalog, updates, and removes a skill', async () => {
++    const home = await tempDir('skill-crud')
++    const ctx = await setupLocal(home)
++    const mutate = ctx.skills.mutator()
++    expect(mutate).toBeDefined()
++
++    // create
++    const created = await mutate!.create(input({ name: 'crud-skill', description: 'first pass' }))
++    expect(created.name).toBe('crud-skill')
++    expect(created.path).toBe(skillFilePath(home, 'crud-skill'))
++    await expect(readFile(created.path, 'utf8')).resolves.toContain('description: first pass')
++
++    // discovered in the catalog
++    const listed = await ctx.skills.list()
++    expect(listed.map(skill => skill.name)).toContain('crud-skill')
++
++    // refusing a duplicate create
++    await expect(mutate!.create(input({ name: 'crud-skill', description: 'again' })))
++      .rejects.toThrow(/already exists/)
++
++    // update
++    const updated = await mutate!.update('crud-skill', input({ name: 'crud-skill', description: 'second pass', body: 'New body.' }))
++    expect(updated.path).toBe(skillFilePath(home, 'crud-skill'))
++    const text = await readFile(updated.path, 'utf8')
++    expect(text).toContain('description: second pass')
++    expect(text).toContain('New body.')
++    // renamed content stays discoverable under the same name
++    const after = await ctx.skills.list()
++    expect(after.find(skill => skill.name === 'crud-skill')?.description).toBe('second pass')
++
++    // update of a missing skill
++    await expect(mutate!.update('absent-skill', input({ name: 'absent-skill' }))).rejects.toThrow(/does not exist/)
++
++    // remove
++    await mutate!.remove('crud-skill')
++    const remaining = await ctx.skills.list()
++    expect(remaining.map(skill => skill.name)).not.toContain('crud-skill')
++
++    // removing a missing skill is a readable refusal
++    await expect(mutate!.remove('crud-skill')).rejects.toThrow(/does not exist/)
++  })
++
++  it('rejects authoring an invalid name through the provider', async () => {
++    const home = await tempDir('skill-crud-bad')
++    const ctx = await setupLocal(home)
++    const mutate = ctx.skills.mutator()!
++    await expect(mutate.create(input({ name: 'upper Case' }))).rejects.toThrow(SkillNameInvalidError)
++    await expect(mutate.update('upper Case', input({ name: 'upper Case' }))).rejects.toThrow(SkillNameInvalidError)
++    await expect(mutate.remove('upper Case')).rejects.toThrow(SkillNameInvalidError)
++  })
++
++  it('writes only user-owned fixes into the user root and leaves project roots untouched', async () => {
++    const home = await tempDir('skill-crud-scope')
++    const project = await tempDir('skill-project')
++    await mkdir(join(project, '.git'), { recursive: true })
++    const ctx = new Context()
++    await ctx.plugin(SkillRegistry)
++    await ctx.plugin(SkillFileSystem, {
++      dshHome: join(home, '.dsh'),
++      agentsHome: join(home, '.agents'),
++      watch: false,
++    })
++    const mutate = ctx.skills.mutator()!
++    await mutate!.create(input({ name: 'home-skill' }))
++    // created under user home, not the project cwd
++    await expect(readFile(skillFilePath(home, 'home-skill'), 'utf8')).resolves.toContain('description: A test skill')
++    await rm(skillFilePath(home, 'home-skill'))
++  })
++})
+diff --git a/packages/skill/skill-filesystem/tsconfig.json b/packages/skill/skill-filesystem/tsconfig.json
+index 80713dee97..dfb642a87d 100644
+--- a/packages/skill/skill-filesystem/tsconfig.json
++++ b/packages/skill/skill-filesystem/tsconfig.json
+@@ -11,6 +11,7 @@
+     { "path": "../../../vendor/schemastery" },
+     { "path": "../../fs/fs" },
+     { "path": "../../util/home-paths" },
++    { "path": "../../util/atomic-write" },
+     { "path": "../skill" },
+     { "path": "../../runtime-diagnostics/invariants" }
+   ]
+diff --git a/packages/skill/skill/src/index.ts b/packages/skill/skill/src/index.ts
+index fd227f5665..a3ddc1d8b9 100644
+--- a/packages/skill/skill/src/index.ts
++++ b/packages/skill/skill/src/index.ts
+@@ -244,6 +244,46 @@ export interface SkillProviderObservation {
+   readonly complete: boolean
+ }
+ 
++/** Authoring payload for a SKILL.md the provider persists into its own writable root. */
++export interface SkillWriteInput {
++  /** Kebab-case skill name; becomes the skill directory name. */
++  readonly name: string
++  /** Short routing description (required frontmatter). */
++  readonly description: string
++  /** Optional extra routing guidance. */
++  readonly whenToUse?: string
++  /** False writes `disable-model-invocation: true`. */
++  readonly modelInvocable: boolean
++  /** False writes `user-invocable: false`. */
++  readonly userInvocable: boolean
++  /** Markdown instruction body written below the frontmatter (not the rendered `<skill_content>` wrapper). */
++  readonly body: string
++}
++
++/** Acknowledgement of a persisted SKILL.md. */
++export interface SkillWriteResult {
++  /** The kebab-case skill name just written. */
++  readonly name: string
++  /** Absolute SKILL.md path on the host. */
++  readonly path: string
++}
++
++/**
++ * Optional provider capability that persists SKILL.md files into a writable
++ * root. Only providers that own local writable files implement this; the
++ * read-only registry contract is untouched for every other provider.
++ */
++export interface SkillProviderMutate {
++  /** Create a new skill. */
++  readonly create: (input: SkillWriteInput) => Promise<SkillWriteResult>
++  /** Return a skill's current editable content from this provider's writable root. */
++  readonly read: (name: string) => Promise<SkillWriteInput | undefined>
++  /** Overwrite an existing skill's body and frontmatter. */
++  readonly update: (name: string, input: SkillWriteInput) => Promise<SkillWriteResult>
++  /** Delete an existing skill owned by this provider. */
++  readonly remove: (name: string) => Promise<void>
++}
++
+ /** Provider interface for one source of skills, such as local directories or a remote registry. */
+ export interface SkillProvider {
+   /** Unique provider name in the `ctx.skills` registry. */
+@@ -265,6 +305,8 @@ export interface SkillProvider {
+    * @returns the full skill body, or `undefined` if it is no longer loadable.
+    */
+   readonly get: (candidate: SkillCandidate, options: SkillLookupOptions) => Promise<SkillDefinition | undefined>
++  /** Optional SKILL.md authoring capability when this provider owns writable files. */
++  readonly mutate?: SkillProviderMutate
+ }
+ 
+ /** Registration-scoped lifecycle and invalidation capability borrowed by one provider. */
+@@ -517,6 +559,24 @@ export class SkillRegistry extends Service {
+     return definition
+   }
+ 
++  /**
++   * Return the first registered provider that exposes the optional writable
++   * SKILL.md capability. The host consumes this to route skill authoring to
++   * the local filesystem provider; providers without a writable root return
++   * no mutator. Read-only consumers never call this.
++   * @returns the writable provider's mutator, or `undefined` when none is mounted.
++   */
++  mutator(): SkillProviderMutate | undefined {
++    // Scoped layers are owned by agent presets a host context cannot author
++    // through; only the global layer's provider (the host's own composition)
++    // is a legitimate write target.
++    for (const { provider } of this.layers.global.providers.values()) {
++      const mutate = provider.mutate
++      if (mutate !== undefined) return mutate
++    }
++    return undefined
++  }
++
+   private async collect(options: SkillViewOptions): Promise<CollectResult> {
+     throwIfAborted(options.signal)
+     let attempt = 1
+diff --git a/tsconfig.base.json b/tsconfig.base.json
+index 16d69db6db..64e4d35827 100644
+--- a/tsconfig.base.json
++++ b/tsconfig.base.json
+@@ -206,6 +206,7 @@
+       "@deepseek-ai/dsh-client-ui-agent-preset": ["./packages/client/ui-agent-preset/src"],
+       "@deepseek-ai/dsh-client-ui-permission-presets": ["./packages/client/ui-permission-presets/src"],
+       "@deepseek-ai/dsh-client-ui-skill": ["./packages/client/ui-skill/src"],
++      "@deepseek-ai/dsh-client-ui-skill-manager": ["./packages/client/ui-skill-manager/src"],
+       "@deepseek-ai/dsh-client-ui-subagent": ["./packages/client/ui-subagent/src"],
+       "@deepseek-ai/dsh-client-ui-settings-plugins": ["./packages/client/ui-settings-plugins/src"],
+       "@deepseek-ai/dsh-client-ui-jobs": ["./packages/client/ui-jobs/src"],
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index e599f76f1b..b3faed2fce 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -72,6 +72,7 @@
+     { "path": "./packages/client/ui-input-trigger" },
+     { "path": "./packages/client/ui-commands" },
+     { "path": "./packages/client/ui-skill" },
++    { "path": "./packages/client/ui-skill-manager" },
+     { "path": "./packages/client/ui-subagent" },
+     { "path": "./packages/client/ui-jobs" },
+     { "path": "./packages/client/ui-directory-picker-browse" },
