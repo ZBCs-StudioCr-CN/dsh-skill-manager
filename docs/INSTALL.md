@@ -19,6 +19,9 @@ cd deepseek-harness
 git apply /path/to/dsh-skill-manager/host/0001-skill-manager-host.patch
 git status   # review: 29 files changed, no conflicts expected on a clean master
 
+# On Windows checkouts (CRLF line endings) the LF patch needs whitespace tolerance:
+git apply --ignore-space-change /path/to/dsh-skill-manager/host/0001-skill-manager-host.patch
+
 # 2. Install the client package into the monorepo
 #    Either copy it in:
 cp -r /path/to/dsh-skill-manager/client packages/client/ui-skill-manager
@@ -98,5 +101,5 @@ Manual check: open the panel, create a skill named `hello-manager`, confirm `$DS
 
 - **Panel missing after adding the package** — plugin discovery runs once at GUI-server startup. Restart `pnpm run dev:web` (or the `dsh web` server).
 - **Verbs fail with a read-only error** — no user-writable skill root is mounted. Ensure `@deepseek-ai/dsh-skill-filesystem` is composed and `$DSH_HOME` is set.
-- **`git apply` rejects the patch** — your checkout drifted from the patch base (e.g. other changes touched the same files). Apply file-by-file with `git apply --3way` and resolve the few hunks manually; the changes are additive.
+- **`git apply` rejects the patch** — on Windows checkouts, first retry with `git apply --ignore-space-change` (CRLF vs LF line endings). If that still fails, your checkout drifted from the patch base (e.g. other changes touched the same files): apply file-by-file with `git apply --3way` and resolve the few hunks manually; the changes are additive.
 - **Project / bundled skills show read-only** — by design. Only `$DSH_HOME/skills` (user-dsh) is writable from the panel.
