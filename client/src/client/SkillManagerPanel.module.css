@@ -95,6 +95,12 @@
   background: var(--dsw-alias-bg-base);
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .body {
   flex: 1;
   min-height: 0;
@@ -192,10 +198,99 @@
 }
 
 .rowActions {
-  flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 12px;
+}
+
+.rowActions .iconButton {
+  width: 22px;
+  height: 22px;
+}
+
+/* ── Switch (enable / default-load) ─────────────────────────────────────── */
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.switchTrack {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--dsw-alias-button-ghost-active-fill);
+  transition: background 0.15s ease;
+}
+
+.switchOn .switchTrack {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.switchThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary-inverted, #ffffff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+
+.switchOn .switchThumb {
+  left: 16px;
+}
+
+.switchLabel {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.switch:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Row action button (load into conversation), same height as a switch ── */
+
+.loadButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 22px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.loadButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.loadButton:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .newButton {
@@ -344,3 +439,329 @@
   line-height: 18px;
   color: var(--dsw-alias-label-primary);
 }
+
+/* ── Centered dialog layout (self-drawn portal, no Modal dependency) ───── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.dialog {
+  position: relative;
+  width: 880px;
+  max-width: calc(100vw - 48px);
+  height: 640px;
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-shadow-lv2);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.dialogHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+}
+
+.dialogTitle {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 44px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.closeButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The dialog body flexes so the inner split can scroll; it also gains its
+   own overflow-y so the whole content region always has a visible scrollbar
+   when the panes exceed the dialog height. */
+.dialogBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.categories {
+  flex: none;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  padding: 10px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.categoriesHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.categoryList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.categoryItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.categoryRow,
+.categoryActive {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.categoryRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.categoryActive {
+  background: var(--dsw-alias-button-ghost-active-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.categoryName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.categoryCount {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.categoryActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.categoryRename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.skillList {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.editorBody {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  overflow-y: auto;
+}
+
+.enabledToggle,
+.disabledToggle,
+.defaultToggleOn,
+.defaultToggleOff {
+  display: none;
+}
+
+.categoryMembership {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.membershipLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.membershipCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.defaultBadge {
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary-inverted);
+  font-size: 10px;
+  line-height: 18px;
+}
+
+.categoryEdit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+/* Explicit, always-visible scrollbars on the scrollable panes so long lists
+   never look clipped (the host theme's scrollbar variables may be absent). */
+.dialogBody,
+.categoryList,
+.skillList,
+.editorBody {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, rgba(127, 127, 127, 0.45)) transparent;
+}
+
+.dialogBody::-webkit-scrollbar,
+.categoryList::-webkit-scrollbar,
+.skillList::-webkit-scrollbar,
+.editorBody::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dialogBody::-webkit-scrollbar-thumb,
+.categoryList::-webkit-scrollbar-thumb,
+.skillList::-webkit-scrollbar-thumb,
+.editorBody::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--dsw-alias-scrollbar-bg-l2, rgba(127, 127, 127, 0.45));
+}
+
+.dialogBody::-webkit-scrollbar-thumb:hover,
+.categoryList::-webkit-scrollbar-thumb:hover,
+.skillList::-webkit-scrollbar-thumb:hover,
+.editorBody::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-scrollbar-hover-l2, rgba(127, 127, 127, 0.65));
+}
+

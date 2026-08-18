@@ -1,4 +1,4 @@
-diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
+﻿diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
 index 210ec0bf80..8652d38dcd 100644
 --- a/packages/api/remotes/src/client/index.ts
 +++ b/packages/api/remotes/src/client/index.ts
@@ -54,7 +54,7 @@ index 1b7627b293..5675078832 100644
    ModelReasoningEffort, ModelSelection, QueueAction, QueuedInboxItem, SessionModels,
    GoalsApi, GoalRef,
 diff --git a/packages/client/connection/src/client/fixture.ts b/packages/client/connection/src/client/fixture.ts
-index dd0566486e..d99dc6f420 100644
+index dd0566486e..36c52c63eb 100644
 --- a/packages/client/connection/src/client/fixture.ts
 +++ b/packages/client/connection/src/client/fixture.ts
 @@ -34,7 +34,7 @@ import { deriveEventMessage, foldSurface } from '@deepseek-ai/dsh-session/surfac
@@ -66,7 +66,7 @@ index dd0566486e..d99dc6f420 100644
  } from './api.ts'
  import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api'
  import { AbstractApiClient, RpcId, SESSION_SEARCH_RESULT_LIMIT } from './api.ts'
-@@ -46,6 +46,19 @@ function rpcRequest<P>(payload: P): RpcRequest<P> {
+@@ -46,6 +46,24 @@ function rpcRequest<P>(payload: P): RpcRequest<P> {
    return { rpcId: RpcId(randomUuid()), payload }
  }
  
@@ -79,6 +79,11 @@ index dd0566486e..d99dc6f420 100644
 +/** In-memory skill store backing the fixture manager's create/read/update/delete. */
 +const fixtureSkillStore = new Map<string, SkillDetail>(FIXTURE_SKILLS.map(skill => [skill.name, skill]))
 +
++/** Fixture user preferences: enabled set (empty = all enabled) and categories. */
++let fixtureEnabled = new Set<string>()
++let fixtureDefaultLoaded = new Set<string>()
++let fixtureCategories: Array<{ id: string; name: string; skills: string[] }> = []
++
 +function existingFixtureSkill(name: string): SkillDetail | undefined {
 +  return fixtureSkillStore.get(name)
 +}
@@ -86,20 +91,26 @@ index dd0566486e..d99dc6f420 100644
  function text(t: string): ContentBlock[] {
    return [{ type: 'text', text: t }]
  }
-@@ -2783,11 +2796,51 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+@@ -2781,13 +2799,99 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+       list: (request) => {
+         const missing = requireSession(request)
          if (missing !== undefined) return missing
++        const entries = [
++          ...(fixtureSkillStore.size === 0 ? FIXTURE_SKILLS : [...fixtureSkillStore.values()]).map(skill => ({
++            name: skill.name,
++            description: skill.description,
++            ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
++            modelInvocable: skill.modelInvocable,
++            editable: true,
++            enabled: fixtureEnabled.size === 0 || fixtureEnabled.has(skill.name),
++          })),
++        ]
          return ok(request, {
-           skills: [
+-          skills: [
 -            { name: 'fixture-demo', description: 'fixture 技能样本', whenToUse: '仅供 UI 目录渲染验收', modelInvocable: true },
 -            { name: 'fixture-user-only', description: 'fixture 仅用户技能样本', modelInvocable: false },
-+            ...(fixtureSkillStore.size === 0 ? FIXTURE_SKILLS : [...fixtureSkillStore.values()]).map(skill => ({
-+              name: skill.name,
-+              description: skill.description,
-+              ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
-+              modelInvocable: skill.modelInvocable,
-+              editable: true,
-+            })),
-           ],
+-          ],
++          skills: request.payload.includeDisabled === true ? entries : entries.filter(entry => entry.enabled),
          })
        },
 +      read: (request) => {
@@ -137,10 +148,54 @@ index dd0566486e..d99dc6f420 100644
 +        }
 +        return ok(request, { deleted: true })
 +      },
++      openFolder: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        return ok(request, { opened: true, path: '/fixture/skills' })
++      },
++      preferencesRead: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        return ok(request, {
++          preferences: {
++            enabled: [...fixtureEnabled],
++            defaultLoaded: [...fixtureDefaultLoaded],
++            categories: fixtureCategories.map(category => ({ ...category, skills: [...category.skills] })),
++          },
++          path: '/fixture/skill-preferences.json',
++        })
++      },
++      preferencesUpdate: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        fixtureEnabled = new Set(request.payload.preferences.enabled)
++        fixtureDefaultLoaded = new Set(request.payload.preferences.defaultLoaded)
++        fixtureCategories = request.payload.preferences.categories.map(category => ({ ...category, skills: [...category.skills] }))
++        return ok(request, { saved: true })
++      },
++      smartClassify: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        const names = fixtureSkillStore.size === 0 ? FIXTURE_SKILLS.map(skill => skill.name) : [...fixtureSkillStore.keys()]
++        return ok(request, {
++          suggestions: names.map(skill => ({
++            skill,
++            categoryId: request.payload.categories.find(category => category.skills.includes(skill))?.id ?? null,
++          })),
++        })
++      },
++      loadToSession: (request) => {
++        const missing = requireSession(request)
++        if (missing !== undefined) return missing
++        if (!fixtureSkillStore.has(request.payload.name) && !FIXTURE_SKILLS.some(skill => skill.name === request.payload.name)) {
++          return err(request, { code: 'skill-not-found', message: `skill-filesystem: skill "${request.payload.name}" does not exist`, details: { name: request.payload.name } })
++        }
++        return ok(request, { accepted: true })
++      },
      },
      goals: {
        // Compatibility face only: old API Proxy payloads and acknowledgements
-@@ -3106,6 +3159,10 @@ export class FixtureApiClient extends AbstractApiClient {
+@@ -3106,6 +3210,15 @@ export class FixtureApiClient extends AbstractApiClient {
        case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
        case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
        case 'skill.list': return this.api.skills.list(request)
@@ -148,6 +203,11 @@ index dd0566486e..d99dc6f420 100644
 +      case 'skill.create': return this.api.skills.create(request)
 +      case 'skill.update': return this.api.skills.update(request)
 +      case 'skill.delete': return this.api.skills.delete(request)
++      case 'skill.openFolder': return this.api.skills.openFolder(request, new AbortController().signal)
++      case 'skill.preferencesRead': return this.api.skills.preferencesRead(request)
++      case 'skill.preferencesUpdate': return this.api.skills.preferencesUpdate(request)
++      case 'skill.smartClassify': return this.api.skills.smartClassify(request)
++      case 'skill.loadToSession': return this.api.skills.loadToSession(request)
        case 'agentPreset.list': return this.api.agentPresets.list(request)
        case 'agentPreset.select': return this.api.agentPresets.select(request)
        case 'agentPreset.read': return this.api.agentPresets.read(request)
@@ -165,10 +225,10 @@ index c4470b13aa..93ec0751ff 100644
    MessageId, ModelReasoningEffort, ModelSelection, QueueAction, QueuedInboxItem, SessionModels,
    SubagentsApi, SubagentAddress, SubagentCatalog, SubagentListEntry, SubagentPromptReceipt,
 diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
-index 35084918e8..bd069d4002 100644
+index 35084918e8..094ef43890 100644
 --- a/packages/client/connection/src/index.ts
 +++ b/packages/client/connection/src/index.ts
-@@ -115,6 +115,14 @@ const PRIVILEGED_METHODS = new Set([
+@@ -115,6 +115,17 @@ const PRIVILEGED_METHODS = new Set([
    'credentials.describe',
    'credentials.set',
    'credentials.unset',
@@ -180,11 +240,14 @@ index 35084918e8..bd069d4002 100644
 +  'skill.create',
 +  'skill.update',
 +  'skill.delete',
++  // Opening the user skills root drives the host desktop (Explorer/Finder),
++  // the same surface as host.openPath — pinned to loopback.
++  'skill.openFolder',
    'llm.discoverModels',
  ])
  
 diff --git a/packages/client/connection/tests/fake-api.client.ts b/packages/client/connection/tests/fake-api.client.ts
-index bee4fc0ce0..0d1768f97e 100644
+index bee4fc0ce0..74634b2333 100644
 --- a/packages/client/connection/tests/fake-api.client.ts
 +++ b/packages/client/connection/tests/fake-api.client.ts
 @@ -3,7 +3,8 @@
@@ -197,7 +260,7 @@ index bee4fc0ce0..0d1768f97e 100644
  } from '../src/client/api.ts'
  import { RpcId } from '../src/client/api.ts'
  
-@@ -174,6 +175,18 @@ export class FakeApiClient implements IApiClient {
+@@ -174,6 +175,32 @@ export class FakeApiClient implements IApiClient {
    onSkillList: (payload: unknown) => Promise<RpcResponse<{ skills: SkillEntry[] }>>
      = () => Promise.resolve(ok({ skills: [] }))
  
@@ -213,10 +276,24 @@ index bee4fc0ce0..0d1768f97e 100644
 +  onSkillDelete: (payload: unknown) => Promise<RpcResponse<{ deleted: true }>>
 +    = () => Promise.resolve(ok({ deleted: true }))
 +
++  onSkillOpenFolder: (payload: unknown) => Promise<RpcResponse<{ opened: boolean; path: string }>>
++    = () => Promise.resolve(ok({ opened: true, path: '/fixture/skills' }))
++
++  onSkillPreferencesRead: (payload: unknown) => Promise<RpcResponse<{ preferences: { enabled: string[]; defaultLoaded: string[]; categories: Array<{ id: string; name: string; skills: string[] }> }; path: string }>>
++    = () => Promise.resolve(ok({ preferences: { enabled: [], defaultLoaded: [], categories: [] }, path: '/fixture/skill-preferences.json' }))
++
++  onSkillPreferencesUpdate: (payload: unknown) => Promise<RpcResponse<{ saved: true }>>
++    = () => Promise.resolve(ok({ saved: true }))
++
++  onSkillSmartClassify: (payload: unknown) => Promise<RpcResponse<{ suggestions: Array<{ skill: string; categoryId: string | null }> }>>
++    = () => Promise.resolve(ok({ suggestions: [] }))
++
++  onSkillLoadToSession: (payload: unknown) => Promise<RpcResponse<{ accepted: true }>>
++    = () => Promise.resolve(ok({ accepted: true }))
  
    readonly agentPresets: IApiClient['agentPresets'] = {
      list: (payload: unknown) => this.record('agentPreset.list', payload, Promise.resolve(ok({ presets: [], authorable: false, hasDocument: false }))),
-@@ -193,6 +206,10 @@ export class FakeApiClient implements IApiClient {
+@@ -193,6 +220,15 @@ export class FakeApiClient implements IApiClient {
  
    readonly skills: IApiClient['skills'] = {
      list: (payload: unknown) => this.record('skill.list', payload, this.onSkillList(payload)),
@@ -224,11 +301,16 @@ index bee4fc0ce0..0d1768f97e 100644
 +    create: (payload: unknown) => this.record('skill.create', payload, this.onSkillCreate(payload)),
 +    update: (payload: unknown) => this.record('skill.update', payload, this.onSkillUpdate(payload)),
 +    delete: (payload: unknown) => this.record('skill.delete', payload, this.onSkillDelete(payload)),
++    openFolder: (payload: unknown) => this.record('skill.openFolder', payload, this.onSkillOpenFolder(payload)),
++    preferencesRead: (payload: unknown) => this.record('skill.preferencesRead', payload, this.onSkillPreferencesRead(payload)),
++    preferencesUpdate: (payload: unknown) => this.record('skill.preferencesUpdate', payload, this.onSkillPreferencesUpdate(payload)),
++    smartClassify: (payload: unknown) => this.record('skill.smartClassify', payload, this.onSkillSmartClassify(payload)),
++    loadToSession: (payload: unknown) => this.record('skill.loadToSession', payload, this.onSkillLoadToSession(payload)),
    }
  
    readonly goals: IApiClient['goals'] = {
 diff --git a/packages/client/runtime/tests/fake-api.client.ts b/packages/client/runtime/tests/fake-api.client.ts
-index 33a0efbbfd..f1ed4a92d6 100644
+index 33a0efbbfd..77027f7927 100644
 --- a/packages/client/runtime/tests/fake-api.client.ts
 +++ b/packages/client/runtime/tests/fake-api.client.ts
 @@ -4,6 +4,7 @@
@@ -239,7 +321,7 @@ index 33a0efbbfd..f1ed4a92d6 100644
    WorkspaceId, WorkspaceView,
  } from '@deepseek-ai/dsh-api-remotes/client'
  import { RpcId } from '@deepseek-ai/dsh-client-connection/client'
-@@ -227,6 +228,18 @@ export class FakeApiClient implements IApiClient {
+@@ -227,6 +228,32 @@ export class FakeApiClient implements IApiClient {
    onSkillList: (payload: unknown) => Promise<RpcResponse<{ skills: SkillEntry[] }>>
      = () => Promise.resolve(ok({ skills: [] }))
  
@@ -255,10 +337,24 @@ index 33a0efbbfd..f1ed4a92d6 100644
 +  onSkillDelete: (payload: unknown) => Promise<RpcResponse<{ deleted: true }>>
 +    = () => Promise.resolve(ok({ deleted: true }))
 +
++  onSkillOpenFolder: (payload: unknown) => Promise<RpcResponse<{ opened: boolean; path: string }>>
++    = () => Promise.resolve(ok({ opened: true, path: '/fixture/skills' }))
++
++  onSkillPreferencesRead: (payload: unknown) => Promise<RpcResponse<{ preferences: { enabled: string[]; defaultLoaded: string[]; categories: Array<{ id: string; name: string; skills: string[] }> }; path: string }>>
++    = () => Promise.resolve(ok({ preferences: { enabled: [], defaultLoaded: [], categories: [] }, path: '/fixture/skill-preferences.json' }))
++
++  onSkillPreferencesUpdate: (payload: unknown) => Promise<RpcResponse<{ saved: true }>>
++    = () => Promise.resolve(ok({ saved: true }))
++
++  onSkillSmartClassify: (payload: unknown) => Promise<RpcResponse<{ suggestions: Array<{ skill: string; categoryId: string | null }> }>>
++    = () => Promise.resolve(ok({ suggestions: [] }))
++
++  onSkillLoadToSession: (payload: unknown) => Promise<RpcResponse<{ accepted: true }>>
++    = () => Promise.resolve(ok({ accepted: true }))
  
    readonly agentPresets: IApiClient['agentPresets'] = {
      list: (payload: unknown) => this.record('agentPreset.list', payload, Promise.resolve(ok({ presets: [], authorable: false, hasDocument: false }))),
-@@ -246,6 +259,10 @@ export class FakeApiClient implements IApiClient {
+@@ -246,6 +273,15 @@ export class FakeApiClient implements IApiClient {
  
    readonly skills: IApiClient['skills'] = {
      list: (payload: unknown) => this.record('skill.list', payload, this.onSkillList(payload)),
@@ -266,6 +362,11 @@ index 33a0efbbfd..f1ed4a92d6 100644
 +    create: (payload: unknown) => this.record('skill.create', payload, this.onSkillCreate(payload)),
 +    update: (payload: unknown) => this.record('skill.update', payload, this.onSkillUpdate(payload)),
 +    delete: (payload: unknown) => this.record('skill.delete', payload, this.onSkillDelete(payload)),
++    openFolder: (payload: unknown) => this.record('skill.openFolder', payload, this.onSkillOpenFolder(payload)),
++    preferencesRead: (payload: unknown) => this.record('skill.preferencesRead', payload, this.onSkillPreferencesRead(payload)),
++    preferencesUpdate: (payload: unknown) => this.record('skill.preferencesUpdate', payload, this.onSkillPreferencesUpdate(payload)),
++    smartClassify: (payload: unknown) => this.record('skill.smartClassify', payload, this.onSkillSmartClassify(payload)),
++    loadToSession: (payload: unknown) => this.record('skill.loadToSession', payload, this.onSkillLoadToSession(payload)),
    }
  
    readonly goals: IApiClient['goals'] = {
@@ -282,18 +383,31 @@ index 0cd1f51cd2..c724c0d96c 100644
      ],
      replaceRisk: 'none',
 diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
-index bda99362b6..82a11baf68 100644
+index bda99362b6..59b817f2ed 100644
 --- a/packages/host/apiproxy/src/api-proxy.ts
 +++ b/packages/host/apiproxy/src/api-proxy.ts
-@@ -22,6 +22,7 @@ import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-se
+@@ -5,7 +5,8 @@
+ 
+ import { randomUUID } from 'node:crypto'
+ import { mkdir, stat } from 'node:fs/promises'
+-import { dirname } from 'node:path'
++import { dirname, join } from 'node:path'
++import { homedir } from 'node:os'
+ import type { Context } from '@deepseek-ai/cordis'
+ import { installModelSelection } from '@deepseek-ai/dsh-agent'
+ import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
+@@ -22,6 +23,10 @@ import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-se
  import { SubagentError } from '@deepseek-ai/dsh-subagent'
  import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
  import { isUserInvocable } from '@deepseek-ai/dsh-skill'
-+import type { SkillProviderMutate, SkillSource } from '@deepseek-ai/dsh-skill'
++import type { SkillProviderMutate, SkillRegistry, SkillSource } from '@deepseek-ai/dsh-skill'
++import {
++  isSkillEnabled, readSkillPreferences, skillPreferencesPath, writeSkillPreferences,
++} from './skill-preferences.ts'
  import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
  import {
    workspaceDomainState, workspaceRecord, WorkspaceId as brandWorkspaceId,
-@@ -1025,6 +1026,65 @@ function presetError(agentPreset: string, error: unknown): RpcError {
+@@ -1025,6 +1030,99 @@ function presetError(agentPreset: string, error: unknown): RpcError {
    return { code: 'internal', message: `agent preset "${agentPreset}": ${String(error)}`, details: {} }
  }
  
@@ -307,6 +421,16 @@ index bda99362b6..82a11baf68 100644
 +type AuthoringAccess =
 +  | { ok: true; mutate: SkillProviderMutate }
 +  | { ok: false; error: RpcError }
++
++/** Resolve the request's session as the authorization context; undefined means not attached. */
++function requireSession(ctx: Context, request: RpcRequest<{ sessionId: SessionId }>): RpcResponse<never> | undefined {
++  if (ctx.sessions.get(request.payload.sessionId) !== undefined) return undefined
++  return err(request, {
++    code: 'session-not-found',
++    message: `session "${request.payload.sessionId}" not found (not attached)`,
++    details: { sessionId: request.payload.sessionId },
++  })
++}
 +
 +function resolveAuthoringRegistry(ctx: Context, request: RpcRequest<{ sessionId: SessionId }>): AuthoringAccess {
 +  const session = ctx.sessions.get(request.payload.sessionId)
@@ -342,6 +466,30 @@ index bda99362b6..82a11baf68 100644
 +  return source === 'user-dsh' || source === 'user-agents'
 +}
 +
++/**
++ * Pick the category a skill best belongs to by keyword overlap between the
++ * skill name+description and each category's name plus its optional extra
++ * keywords. Returns the category id, or `null` when no category matches
++ * (uncategorized).
++ */
++function bestCategoryFor(
++  name: string,
++  description: string,
++  categories: readonly { readonly id: string; readonly name: string; readonly keywords?: readonly string[] }[],
++): string | null {
++  const haystack = `${name} ${description}`.toLowerCase()
++  let best: { id: string; hits: number } | undefined
++  for (const category of categories) {
++    const terms = new Set([
++      ...category.name.toLowerCase().split(/[^a-z0-9\u4e00-\u9fa5]+/u).filter(token => token.length > 0),
++      ...(category.keywords ?? []).map(keyword => keyword.trim().toLowerCase()).filter(token => token.length > 0),
++    ])
++    const hits = [...terms].filter(term => haystack.includes(term)).length
++    if (hits > 0 && (best === undefined || hits > best.hits)) best = { id: category.id, hits }
++  }
++  return best?.id ?? null
++}
++
 +/** Map one skill authoring failure onto its wire code (authoring errors carry a stable code and name). */
 +function skillWriteError(error: unknown): RpcError {
 +  const record = typeof error === 'object' && error !== null ? error as Record<string, unknown> : {}
@@ -359,14 +507,30 @@ index bda99362b6..82a11baf68 100644
  class AgentPresetConflict extends Error {
    constructor(
      readonly sessionId: SessionId,
-@@ -3249,12 +3309,71 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
-               description: skill.description,
-               ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
-               modelInvocable: skill.invocation.modelInvocable,
-+              // Only user-owned files are the manager's to author; a project
-+              // or bundled skill is read-only from the user's skill manager.
-+              editable: isUserOwnedSource(skill.source),
-             })),
+@@ -3242,19 +3340,185 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+         // '/' popup lists the catalog its composition actually serves.
+         const scope = await presenterScopeFor(sessionId, session)
+         try {
++          const preferences = await readSkillPreferences(skillPreferencesPath())
+           const skills = (await skillRegistry.list({ cwd, scope })).filter(isUserInvocable)
++          const entries = skills.map(skill => ({
++            name: skill.name,
++            description: skill.description,
++            ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
++            modelInvocable: skill.invocation.modelInvocable,
++            // Only user-owned files are the manager's to author; a project
++            // or bundled skill is read-only from the user's skill manager.
++            editable: isUserOwnedSource(skill.source),
++            enabled: isSkillEnabled(preferences, skill.name),
++          }))
+           return ok(request, {
+-            skills: skills.map(skill => ({
+-              name: skill.name,
+-              description: skill.description,
+-              ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
+-              modelInvocable: skill.invocation.modelInvocable,
+-            })),
++            skills: request.payload.includeDisabled === true ? entries : entries.filter(entry => entry.enabled),
            })
          } catch (error: unknown) {
            return err(request, { code: 'internal', message: `skill listing failed: ${String(error)}`, details: {} })
@@ -428,6 +592,110 @@ index bda99362b6..82a11baf68 100644
 +          return err(request, skillWriteError(errorValue))
 +        }
 +      },
++
++      async openFolder(request, signal) {
++        // The user skills root is the one writable-from-the-panel location;
++        // the host resolves it (client never submits a path), same resolution
++        // as the filesystem provider's user-dsh root.
++        const session = ctx.sessions.get(request.payload.sessionId)
++        if (session === undefined) {
++          return err(request, {
++            code: 'session-not-found',
++            message: `session "${request.payload.sessionId}" not found (not attached)`,
++            details: { sessionId: request.payload.sessionId },
++          })
++        }
++        const dshHome = process.env.DSH_HOME !== undefined && process.env.DSH_HOME.trim().length > 0
++          ? process.env.DSH_HOME
++          : join(homedir(), '.dsh')
++        const folder = join(dshHome, 'skills')
++        if (isAborted(signal)) {
++          return err(request, { code: 'cancelled', message: 'skill folder open was aborted', details: {} })
++        }
++        try {
++          await mkdir(folder, { recursive: true })
++        } catch (error: unknown) {
++          return err(request, { code: 'internal', message: `skill folder prepare failed: ${String(error)}`, details: {} })
++        }
++        if (isAborted(signal)) {
++          return err(request, { code: 'cancelled', message: 'skill folder open was aborted', details: {} })
++        }
++        if (!canOpenPaths()) return ok(request, { opened: false, path: folder })
++        return openPath(request, folder, signal)
++          .then(() => ok(request, { opened: true, path: folder }))
++          .catch((error: unknown) => err(request, { code: 'internal', message: `skill folder open failed: ${String(error)}`, details: {} }))
++      },
++
++      async preferencesRead(request) {
++        const missing = requireSession(ctx, request)
++        if (missing !== undefined) return missing
++        const preferences = await readSkillPreferences(skillPreferencesPath())
++        return ok(request, {
++          preferences: {
++            enabled: [...preferences.enabled],
++            defaultLoaded: [...preferences.defaultLoaded],
++            categories: preferences.categories.map(category => ({ ...category, skills: [...category.skills] })),
++          },
++          path: skillPreferencesPath(),
++        })
++      },
++
++      async preferencesUpdate(request) {
++        const missing = requireSession(ctx, request)
++        if (missing !== undefined) return missing
++        const { preferences } = request.payload
++        try {
++          await writeSkillPreferences(skillPreferencesPath(), {
++            version: 1,
++            enabled: [...preferences.enabled],
++            defaultLoaded: [...preferences.defaultLoaded],
++            categories: preferences.categories.map(category => ({ ...category, skills: [...category.skills] })),
++          })
++          return ok(request, { saved: true })
++        } catch (error: unknown) {
++          return err(request, { code: 'internal', message: `skill preferences save failed: ${String(error)}`, details: {} })
++        }
++      },
++
++      async smartClassify(request) {
++        const missing = requireSession(ctx, request)
++        if (missing !== undefined) return missing
++        // Keyword-rule classification: every skill's name + description is
++        // matched against the caller's category set. (LLM-backed suggestions
++        // are a documented follow-up; rules keep this usable without a key.)
++        try {
++          const registry = ctx.get('skills') as SkillRegistry | undefined
++          if (registry === undefined) {
++            return err(request, { code: 'internal', message: 'skill registry is absent: the host composition mounts no @deepseek-ai/dsh-skill', details: {} })
++          }
++          const all = await registry.list()
++          const categories = request.payload.categories
++          const suggestions = all.map(skill => ({
++            skill: skill.name,
++            categoryId: bestCategoryFor(skill.name, skill.description, categories),
++          }))
++          return ok(request, { suggestions })
++        } catch (error: unknown) {
++          return err(request, { code: 'internal', message: `skill classification failed: ${String(error)}`, details: {} })
++        }
++      },
++
++      async loadToSession(request) {
++        // Reuse the session.prompt admission path: a `/name` user message whose
++        // pre-step boundary (dsh-tool-skill) injects the rendered skill body as
++        // instructions context for the next step. Enablement is untouched.
++        const { sessionId, name } = request.payload
++        const resolved = await turnAgentFor<{ accepted: true }>(request, sessionId)
++        if ('refused' in resolved) return resolved.refused
++        try {
++          const durable = await durablePromptContent(ctx, [{ type: 'text', text: `/${name}` }])
++          const source: MessageSource = { kind: 'user', rpcId: request.rpcId }
++          resolved.agent.steer(createUserMessage({ content: durable, source }))
++          return ok(request, { accepted: true })
++        } catch (error: unknown) {
++          return err(request, { code: 'internal', message: `skill load into session failed: ${String(error)}`, details: {} })
++        }
++      },
      },
  
      settings: {
@@ -445,10 +713,10 @@ index b5e1d1ffd9..c3b183a1c4 100644
  export type { EventsApi, MuxFrame, HostFrame, QueuedInboxItem, ToolCallView, ToolEventView, ToolResultView } from './events.ts'
  export type { GoalsApi, GoalId, GoalRef } from './goals.ts'
 diff --git a/packages/host/apiproxy/src/api/rpc-map.ts b/packages/host/apiproxy/src/api/rpc-map.ts
-index 80dede1799..2bb49af2f0 100644
+index 80dede1799..b598700863 100644
 --- a/packages/host/apiproxy/src/api/rpc-map.ts
 +++ b/packages/host/apiproxy/src/api/rpc-map.ts
-@@ -51,6 +51,10 @@ export interface RpcMethodMap {
+@@ -51,6 +51,15 @@ export interface RpcMethodMap {
    'workspace.insertSessionBefore': WorkspaceApi['insertSessionBefore']
    'workspace.archiveSession': WorkspaceApi['archiveSession']
    'skill.list': SkillsApi['list']
@@ -456,6 +724,11 @@ index 80dede1799..2bb49af2f0 100644
 +  'skill.create': SkillsApi['create']
 +  'skill.update': SkillsApi['update']
 +  'skill.delete': SkillsApi['delete']
++  'skill.openFolder': SkillsApi['openFolder']
++  'skill.preferencesRead': SkillsApi['preferencesRead']
++  'skill.preferencesUpdate': SkillsApi['preferencesUpdate']
++  'skill.smartClassify': SkillsApi['smartClassify']
++  'skill.loadToSession': SkillsApi['loadToSession']
    'agentPreset.list': AgentPresetsApi['list']
    'agentPreset.select': AgentPresetsApi['select']
    'agentPreset.read': AgentPresetsApi['read']
@@ -477,10 +750,10 @@ index 134a39eba9..b5f822f036 100644
  }
  
 diff --git a/packages/host/apiproxy/src/api/skills.schema.ts b/packages/host/apiproxy/src/api/skills.schema.ts
-index 747bf19bad..f947ec464c 100644
+index 747bf19bad..07de489a85 100644
 --- a/packages/host/apiproxy/src/api/skills.schema.ts
 +++ b/packages/host/apiproxy/src/api/skills.schema.ts
-@@ -1,20 +1,29 @@
+@@ -1,28 +1,179 @@
  /**
   * skills domain zod schemas (names derived from map keys: skillListRequestSchema /
 - * skillListValueSchema).
@@ -494,7 +767,10 @@ index 747bf19bad..f947ec464c 100644
  import type { Wire } from './rpc.schema.ts'
  import { sessionIdSchema } from './sessions.schema.ts'
 -import type { SkillEntry } from './skills.ts'
-+import type { SkillEntry, SkillWritePayload, SkillWriteResult } from './skills.ts'
++import type {
++  SkillCategoryView, SkillEntry, SkillPreferencesView,
++  SkillWritePayload, SkillWriteResult,
++} from './skills.ts'
 +
 +/** Kebab-case skill name grammar (mirrors @deepseek-ai/dsh-skill isSkillName). */
 +const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -510,10 +786,16 @@ index 747bf19bad..f947ec464c 100644
    whenToUse: z.string().optional(),
    modelInvocable: z.boolean(),
 +  editable: z.boolean(),
++  enabled: z.boolean(),
  }) satisfies z.ZodType<Wire<SkillEntry>>
  
  /** skill.list request payload. */
-@@ -26,3 +35,67 @@ export const skillListRequestSchema = z.object({
+ export const skillListRequestSchema = z.object({
+   sessionId: sessionIdSchema,
++  includeDisabled: z.boolean().optional(),
+ }) satisfies z.ZodType<Wire<RequestPayload<'skill.list'>>>
+ 
+ /** skill.list response value. */
  export const skillListValueSchema = z.object({
    skills: z.array(skillEntrySchema),
  }) satisfies z.ZodType<Wire<ResponseValue<'skill.list'>>>
@@ -577,23 +859,111 @@ index 747bf19bad..f947ec464c 100644
 +  name: skillNameSchema,
 +}) satisfies z.ZodType<Wire<RequestPayload<'skill.delete'>>>
 +
++/** skill.openFolder request payload. */
++export const skillOpenFolderRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.openFolder'>>>
++
++/** skill.openFolder response value. */
++export const skillOpenFolderValueSchema = z.object({
++  opened: z.boolean(),
++  path: z.string(),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.openFolder'>>>
++
 +/** skill.delete response value. */
 +export const skillDeleteValueSchema = z.object({
 +  deleted: z.literal(true),
 +}) satisfies z.ZodType<Wire<ResponseValue<'skill.delete'>>>
++
++/** One category view shared by preferences read/update and smart classify. */
++export const skillCategorySchema = z.object({
++  id: z.string().min(1),
++  name: z.string().min(1),
++  keywords: z.array(z.string()).optional(),
++  skills: z.array(skillNameSchema),
++}) satisfies z.ZodType<Wire<SkillCategoryView>>
++
++/** The preferences view. */
++export const skillPreferencesSchema = z.object({
++  enabled: z.array(skillNameSchema),
++  defaultLoaded: z.array(skillNameSchema),
++  categories: z.array(skillCategorySchema),
++}) satisfies z.ZodType<Wire<SkillPreferencesView>>
++
++/** skill.preferencesRead request payload. */
++export const skillPreferencesReadRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.preferencesRead'>>>
++
++/** skill.preferencesRead response value. */
++export const skillPreferencesReadValueSchema = z.object({
++  preferences: skillPreferencesSchema,
++  path: z.string(),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.preferencesRead'>>>
++
++/** skill.preferencesUpdate request payload. */
++export const skillPreferencesUpdateRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  preferences: skillPreferencesSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.preferencesUpdate'>>>
++
++/** skill.preferencesUpdate response value. */
++export const skillPreferencesUpdateValueSchema = z.object({
++  saved: z.literal(true),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.preferencesUpdate'>>>
++
++/** skill.smartClassify request payload. */
++export const skillSmartClassifyRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  categories: z.array(skillCategorySchema),
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.smartClassify'>>>
++
++/** skill.smartClassify response value. */
++export const skillSmartClassifyValueSchema = z.object({
++  suggestions: z.array(z.object({
++    skill: skillNameSchema,
++    categoryId: z.string().nullable(),
++  })),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.smartClassify'>>>
++
++/** skill.loadToSession request payload. */
++export const skillLoadToSessionRequestSchema = z.object({
++  sessionId: sessionIdSchema,
++  name: skillNameSchema,
++}) satisfies z.ZodType<Wire<RequestPayload<'skill.loadToSession'>>>
++
++/** skill.loadToSession response value. */
++export const skillLoadToSessionValueSchema = z.object({
++  accepted: z.literal(true),
++}) satisfies z.ZodType<Wire<ResponseValue<'skill.loadToSession'>>>
 diff --git a/packages/host/apiproxy/src/api/skills.ts b/packages/host/apiproxy/src/api/skills.ts
-index 3b3e711a93..5b33064f88 100644
+index 3b3e711a93..1b944b7a07 100644
 --- a/packages/host/apiproxy/src/api/skills.ts
 +++ b/packages/host/apiproxy/src/api/skills.ts
-@@ -18,6 +18,39 @@ export interface SkillEntry {
+@@ -1,5 +1,6 @@
+ /**
+- * skills domain contract: read-only skill catalog lookup addressed by session.
++ * skills domain contract: read-only skill catalog lookup addressed by session,
++ * plus user-level skill preferences (enablement + categorization).
+  * The session's header cwd resolves to the canonical project root host-side —
+  * the client never submits a raw path, and skill lookup never creates or
+  * resumes an Agent.
+@@ -18,16 +19,128 @@ export interface SkillEntry {
    readonly whenToUse?: string
    /** False marks a user-only skill (`disable-model-invocation`): invocable here, absent from the model catalog. */
    readonly modelInvocable: boolean
 +  /** Whether this skill resolves to a user-owned file the manager may edit or delete. */
 +  readonly editable: boolean
-+}
-+
-+/**
++  /** Whether the skill is enabled by the user preferences (defaults to true when no enablement list exists). */
++  readonly enabled: boolean
+ }
+ 
+ /**
+- * Skill-domain unary methods (the map key skill.* of RpcMethodMap). Listing
+- * is the domain's only RPC: invocation itself is a plain `session.prompt`
+- * whose leading `/name` token the host recognizes at the pre-step boundary
+- * (`dsh-tool-skill` injects the rendered body there), so every client shares
+- * one deterministic path with no dedicated invocation wire.
 + * Editable SKILL.md content the browser manager form reads and writes. This is
 + * the entire frontmatter + body the host persists into the user skills root;
 + * unlike the read catalog row it carries invocation state and the body text.
@@ -622,13 +992,55 @@ index 3b3e711a93..5b33064f88 100644
 +  readonly name: string
 +  /** Absolute SKILL.md path on the host. */
 +  readonly path: string
- }
- 
- /**
-@@ -30,4 +63,16 @@ export interface SkillEntry {
++}
++
++/** One user category; a skill may belong to several categories. */
++export interface SkillCategoryView {
++  /** Stable kebab-case id. */
++  readonly id: string
++  /** Display name. */
++  readonly name: string
++  /** Optional extra terms smart classification also matches against (the name always counts). */
++  readonly keywords?: readonly string[]
++  /** Skill names assigned to this category. */
++  readonly skills: readonly string[]
++}
++
++/** The whole persisted preference set. */
++export interface SkillPreferencesView {
++  /** Enabled skill names; empty means everything is enabled. */
++  readonly enabled: readonly string[]
++  /** Skill names auto-loaded into every new/opened session (global default). */
++  readonly defaultLoaded: readonly string[]
++  /** Category definitions and member lists. */
++  readonly categories: readonly SkillCategoryView[]
++}
++
++/** Suggested category assignment produced by smart classification. */
++export interface SkillClassificationSuggestion {
++  /** The skill name being classified. */
++  readonly skill: string
++  /** The suggested category id, or `null` to leave uncategorized. */
++  readonly categoryId: string | null
++}
++
++/**
++ * Skill-domain unary methods (the map key skill.* of RpcMethodMap). Invocation
++ * itself is a plain `session.prompt` whose leading `/name` token the host
++ * recognizes at the pre-step boundary (`dsh-tool-skill` injects the rendered
++ * body there), so every client shares one deterministic path with no dedicated
++ * invocation wire.
+  */
  export interface SkillsApi {
-   /** Lists the user-invocable skill catalog for the session's project. */
-   list(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<{ skills: readonly SkillEntry[] }>>
+-  /** Lists the user-invocable skill catalog for the session's project. */
+-  list(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<{ skills: readonly SkillEntry[] }>>
++  /**
++   * List the user-invocable skill catalog for the session's project. By
++   * default only enabled skills are returned (user preferences); pass
++   * `includeDisabled` to receive every skill with its `enabled` flag so the
++   * manager UI can toggle enablement.
++   */
++  list(request: RpcRequest<{ sessionId: SessionId; includeDisabled?: boolean }>): Promise<RpcResponse<{ skills: readonly SkillEntry[] }>>
 +
 +  /** Read one user-owned skill's full editable content. */
 +  read(request: RpcRequest<{ sessionId: SessionId; name: string }>): Promise<RpcResponse<{ skill: SkillDetail }>>
@@ -641,24 +1053,56 @@ index 3b3e711a93..5b33064f88 100644
 +
 +  /** Delete a user-owned skill. */
 +  delete(request: RpcRequest<{ sessionId: SessionId; name: string }>): Promise<RpcResponse<{ deleted: true }>>
++
++  /**
++   * Open the user skills root (`$DSH_HOME/skills`) with the operating system's
++   * default file manager. The host resolves the directory — the client never
++   * submits a path. When the deployment has no native opener, `opened` is
++   * false and `path` still carries the directory for the UI to display.
++   */
++  openFolder(request: RpcRequest<{ sessionId: SessionId }>, signal: AbortSignal): Promise<RpcResponse<{ opened: boolean; path: string }>>
++
++  /** Read the current user skill preferences (enablement + categories). */
++  preferencesRead(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<{ preferences: SkillPreferencesView; path: string }>>
++
++  /** Persist the full user skill preferences. */
++  preferencesUpdate(request: RpcRequest<{ sessionId: SessionId; preferences: SkillPreferencesView }>): Promise<RpcResponse<{ saved: true }>>
++
++  /**
++   * Classify skills into categories. Uses the LLM when one is mounted (keyed
++   * off the skill name + description against the given category set), and
++   * falls back to keyword matching otherwise. Returns suggestions the caller
++   * applies via preferencesUpdate — it never writes preferences itself.
++   */
++  smartClassify(request: RpcRequest<{ sessionId: SessionId; categories: readonly SkillCategoryView[] }>): Promise<RpcResponse<{ suggestions: readonly SkillClassificationSuggestion[] }>>
++
++  /**
++   * Load one skill's instructions into the current conversation by prompting
++   * `/name` — the host pre-step boundary (`dsh-tool-skill`) injects the
++   * rendered body as instructions context for the next step. This is the
++   * "use in this conversation" verb; it does not touch enablement preferences.
++   */
++  loadToSession(request: RpcRequest<{ sessionId: SessionId; name: string }>): Promise<RpcResponse<{ accepted: true }>>
  }
 diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
-index 70e3ece58f..ae8ddfa160 100644
+index 70e3ece58f..db408ef4e8 100644
 --- a/packages/host/apiproxy/src/fetch/client.ts
 +++ b/packages/host/apiproxy/src/fetch/client.ts
-@@ -40,7 +40,10 @@ import {
+@@ -40,7 +40,12 @@ import {
    workspaceListValueSchema,
    workspaceRenameValueSchema,
  } from '../api/workspace.schema.ts'
 -import { skillListValueSchema } from '../api/skills.schema.ts'
 +import {
 +  skillCreateValueSchema, skillDeleteValueSchema, skillListValueSchema,
-+  skillReadValueSchema, skillUpdateValueSchema,
++  skillLoadToSessionValueSchema, skillOpenFolderValueSchema, skillPreferencesReadValueSchema,
++  skillPreferencesUpdateValueSchema, skillReadValueSchema, skillSmartClassifyValueSchema,
++  skillUpdateValueSchema,
 +} from '../api/skills.schema.ts'
  import {
    agentPresetCopyValueSchema, agentPresetListValueSchema, agentPresetOpenDocumentValueSchema,
    agentPresetReadValueSchema, agentPresetRemoveValueSchema, agentPresetSelectValueSchema,
-@@ -123,6 +126,10 @@ export interface IApiClient {
+@@ -123,6 +128,15 @@ export interface IApiClient {
    }
    skills: {
      list(payload: RequestPayload<'skill.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.list'>>>
@@ -666,10 +1110,15 @@ index 70e3ece58f..ae8ddfa160 100644
 +    create(payload: RequestPayload<'skill.create'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.create'>>>
 +    update(payload: RequestPayload<'skill.update'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.update'>>>
 +    delete(payload: RequestPayload<'skill.delete'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.delete'>>>
++    openFolder(payload: RequestPayload<'skill.openFolder'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.openFolder'>>>
++    preferencesRead(payload: RequestPayload<'skill.preferencesRead'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.preferencesRead'>>>
++    preferencesUpdate(payload: RequestPayload<'skill.preferencesUpdate'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.preferencesUpdate'>>>
++    smartClassify(payload: RequestPayload<'skill.smartClassify'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.smartClassify'>>>
++    loadToSession(payload: RequestPayload<'skill.loadToSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.loadToSession'>>>
    }
    agentPresets: {
      list(payload: RequestPayload<'agentPreset.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.list'>>>
-@@ -199,6 +206,10 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
+@@ -199,6 +213,15 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
    'workspace.insertSessionBefore': workspaceInsertSessionBeforeValueSchema,
    'workspace.archiveSession': workspaceArchiveSessionValueSchema,
    'skill.list': skillListValueSchema,
@@ -677,10 +1126,15 @@ index 70e3ece58f..ae8ddfa160 100644
 +  'skill.create': skillCreateValueSchema,
 +  'skill.update': skillUpdateValueSchema,
 +  'skill.delete': skillDeleteValueSchema,
++  'skill.openFolder': skillOpenFolderValueSchema,
++  'skill.preferencesRead': skillPreferencesReadValueSchema,
++  'skill.preferencesUpdate': skillPreferencesUpdateValueSchema,
++  'skill.smartClassify': skillSmartClassifyValueSchema,
++  'skill.loadToSession': skillLoadToSessionValueSchema,
    'agentPreset.list': agentPresetListValueSchema,
    'agentPreset.select': agentPresetSelectValueSchema,
    'agentPreset.read': agentPresetReadValueSchema,
-@@ -455,6 +466,10 @@ export abstract class AbstractApiClient implements IApiClient {
+@@ -455,6 +478,15 @@ export abstract class AbstractApiClient implements IApiClient {
  
    readonly skills: IApiClient['skills'] = {
      list: (payload, signal) => this.callUnary('skill.list', payload, signal),
@@ -688,26 +1142,33 @@ index 70e3ece58f..ae8ddfa160 100644
 +    create: (payload, signal) => this.callUnary('skill.create', payload, signal),
 +    update: (payload, signal) => this.callUnary('skill.update', payload, signal),
 +    delete: (payload, signal) => this.callUnary('skill.delete', payload, signal),
++    openFolder: (payload, signal) => this.callUnary('skill.openFolder', payload, signal),
++    preferencesRead: (payload, signal) => this.callUnary('skill.preferencesRead', payload, signal),
++    preferencesUpdate: (payload, signal) => this.callUnary('skill.preferencesUpdate', payload, signal),
++    smartClassify: (payload, signal) => this.callUnary('skill.smartClassify', payload, signal),
++    loadToSession: (payload, signal) => this.callUnary('skill.loadToSession', payload, signal),
    }
  
    // Annotated like every sibling, and load-bearing rather than cosmetic:
 diff --git a/packages/host/apiproxy/src/fetch/handler.ts b/packages/host/apiproxy/src/fetch/handler.ts
-index 697171ec53..aef614d41b 100644
+index 697171ec53..ecce0d1759 100644
 --- a/packages/host/apiproxy/src/fetch/handler.ts
 +++ b/packages/host/apiproxy/src/fetch/handler.ts
-@@ -43,7 +43,10 @@ import {
+@@ -43,7 +43,12 @@ import {
    workspaceListRequestSchema,
    workspaceRenameRequestSchema,
  } from '../api/workspace.schema.ts'
 -import { skillListRequestSchema } from '../api/skills.schema.ts'
 +import {
 +  skillCreateRequestSchema, skillDeleteRequestSchema, skillListRequestSchema,
-+  skillReadRequestSchema, skillUpdateRequestSchema,
++  skillLoadToSessionRequestSchema, skillOpenFolderRequestSchema, skillPreferencesReadRequestSchema,
++  skillPreferencesUpdateRequestSchema, skillReadRequestSchema, skillSmartClassifyRequestSchema,
++  skillUpdateRequestSchema,
 +} from '../api/skills.schema.ts'
  import {
    agentPresetCopyRequestSchema, agentPresetListRequestSchema, agentPresetOpenDocumentRequestSchema,
    agentPresetReadRequestSchema, agentPresetRemoveRequestSchema, agentPresetSelectRequestSchema,
-@@ -117,6 +120,10 @@ const UNARY_ROUTES: UnaryRoutes = {
+@@ -117,6 +122,15 @@ const UNARY_ROUTES: UnaryRoutes = {
    'workspace.insertSessionBefore': { schema: workspaceInsertSessionBeforeRequestSchema, invoke: (api, r) => api.workspace.insertSessionBefore(r) },
    'workspace.archiveSession': { schema: workspaceArchiveSessionRequestSchema, invoke: (api, r) => api.workspace.archiveSession(r) },
    'skill.list': { schema: skillListRequestSchema, invoke: (api, r) => api.skills.list(r) },
@@ -715,14 +1176,160 @@ index 697171ec53..aef614d41b 100644
 +  'skill.create': { schema: skillCreateRequestSchema, invoke: (api, r) => api.skills.create(r) },
 +  'skill.update': { schema: skillUpdateRequestSchema, invoke: (api, r) => api.skills.update(r) },
 +  'skill.delete': { schema: skillDeleteRequestSchema, invoke: (api, r) => api.skills.delete(r) },
++  'skill.openFolder': { schema: skillOpenFolderRequestSchema, invoke: (api, r, signal) => api.skills.openFolder(r, signal) },
++  'skill.preferencesRead': { schema: skillPreferencesReadRequestSchema, invoke: (api, r) => api.skills.preferencesRead(r) },
++  'skill.preferencesUpdate': { schema: skillPreferencesUpdateRequestSchema, invoke: (api, r) => api.skills.preferencesUpdate(r) },
++  'skill.smartClassify': { schema: skillSmartClassifyRequestSchema, invoke: (api, r) => api.skills.smartClassify(r) },
++  'skill.loadToSession': { schema: skillLoadToSessionRequestSchema, invoke: (api, r) => api.skills.loadToSession(r) },
    'agentPreset.list': { schema: agentPresetListRequestSchema, invoke: (api, r) => api.agentPresets.list(r) },
    'agentPreset.select': { schema: agentPresetSelectRequestSchema, invoke: (api, r) => api.agentPresets.select(r) },
    'agentPreset.read': { schema: agentPresetReadRequestSchema, invoke: (api, r) => api.agentPresets.read(r) },
+diff --git a/packages/host/apiproxy/src/skill-preferences.ts b/packages/host/apiproxy/src/skill-preferences.ts
+new file mode 100644
+index 0000000000..ebfcc68b61
+--- /dev/null
++++ b/packages/host/apiproxy/src/skill-preferences.ts
+@@ -0,0 +1,135 @@
++/**
++ * Skill preferences: user-level enablement and categorization stored in
++ * `$DSH_HOME/skill-preferences.json`. Kept separate from SKILL.md bodies so
++ * toggling enablement or reorganizing categories never rewrites user skill
++ * files. Absent file or empty `enabled` means every user-invocable skill stays
++ * enabled (backward compatible); once a non-empty list exists, only listed
++ * names are enabled.
++ * @module @deepseek-ai/dsh-host-apiproxy/skill-preferences
++ */
++
++import { readFile, writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { homedir } from 'node:os'
++
++/** Preference file version; bump with incompatible shape changes. */
++export const SKILL_PREFERENCES_VERSION = 1
++
++/** One user category; a skill may belong to several categories. */
++export interface SkillCategory {
++  /** Stable kebab-case id used as the category key. */
++  readonly id: string
++  /** Display name shown in the UI. */
++  readonly name: string
++  /** Optional extra terms smart classification matches against (the name always counts). */
++  readonly keywords?: readonly string[]
++  /** Skill names assigned to this category. */
++  readonly skills: readonly string[]
++}
++
++/** The whole persisted preference set. */
++export interface SkillPreferences {
++  /** Shape version (SKILL_PREFERENCES_VERSION). */
++  readonly version: number
++  /** Enabled skill names; empty/absent means everything is enabled. */
++  readonly enabled: readonly string[]
++  /** Skill names auto-loaded into every new/opened session. */
++  readonly defaultLoaded: readonly string[]
++  /** Category definitions and member lists. */
++  readonly categories: readonly SkillCategory[]
++}
++
++/** Empty preferences with a valid version (no enablement restriction). */
++export function emptyPreferences(): SkillPreferences {
++  return { version: SKILL_PREFERENCES_VERSION, enabled: [], defaultLoaded: [], categories: [] }
++}
++
++/** Resolve the user skills root (`$DSH_HOME/skills`), same resolution as the filesystem provider's user-dsh root. */
++export function resolveUserSkillsRoot(dshHome?: string): string {
++  const home = dshHome !== undefined && dshHome.trim().length > 0
++    ? dshHome
++    : (process.env.DSH_HOME !== undefined && process.env.DSH_HOME.trim().length > 0
++      ? process.env.DSH_HOME
++      : join(homedir(), '.dsh'))
++  return join(home, 'skills')
++}
++
++/** Resolve the preferences file path under the user harness home. */
++export function skillPreferencesPath(dshHome?: string): string {
++  const home = dshHome !== undefined && dshHome.trim().length > 0
++    ? dshHome
++    : (process.env.DSH_HOME !== undefined && process.env.DSH_HOME.trim().length > 0
++      ? process.env.DSH_HOME
++      : join(homedir(), '.dsh'))
++  return join(home, 'skill-preferences.json')
++}
++
++/**
++ * Read the persisted preferences; a missing or corrupt file yields empty
++ * preferences (all enabled) rather than a hard failure.
++ * @param file - the preferences file path.
++ * @returns the parsed preferences.
++ */
++export async function readSkillPreferences(file: string): Promise<SkillPreferences> {
++  let raw: string
++  try {
++    raw = await readFile(file, 'utf8')
++  } catch {
++    return emptyPreferences()
++  }
++  try {
++    const parsed = JSON.parse(raw) as unknown
++    return normalizePreferences(parsed)
++  } catch {
++    // Corrupt file: treat as empty; the next update overwrites it.
++    return emptyPreferences()
++  }
++}
++
++/**
++ * Persist preferences atomically enough for a user config file (write via temp
++ * sibling then rename is not required here; the GUI is the only writer).
++ * @param file - the preferences file path.
++ * @param preferences - the full set to persist.
++ */
++export async function writeSkillPreferences(file: string, preferences: SkillPreferences): Promise<void> {
++  await writeFile(file, `${JSON.stringify(preferences, null, 2)}\n`, 'utf8')
++}
++
++/**
++ * Whether a skill name is enabled under the given preferences. An empty
++ * `enabled` list (the default and backward-compatible state) enables all.
++ * @param preferences - the preference set.
++ * @param name - the skill name.
++ * @returns whether the skill is enabled.
++ */
++export function isSkillEnabled(preferences: SkillPreferences, name: string): boolean {
++  return preferences.enabled.length === 0 || preferences.enabled.includes(name)
++}
++
++/** Coerce an untrusted parsed value into a valid preference shape. */
++function normalizePreferences(value: unknown): SkillPreferences {
++  if (typeof value !== 'object' || value === null || Array.isArray(value)) return emptyPreferences()
++  const record = value as Record<string, unknown>
++  return {
++    version: typeof record.version === 'number' ? record.version : SKILL_PREFERENCES_VERSION,
++    enabled: stringArray(record.enabled),
++    defaultLoaded: stringArray(record.defaultLoaded),
++    categories: Array.isArray(record.categories)
++      ? record.categories
++          .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
++          .map(entry => ({
++            id: typeof entry.id === 'string' ? entry.id : '',
++            name: typeof entry.name === 'string' ? entry.name : '',
++            keywords: stringArray(entry.keywords),
++            skills: stringArray(entry.skills),
++          }))
++          .filter(category => category.id.length > 0)
++      : [],
++  }
++}
++
++function stringArray(value: unknown): string[] {
++  if (!Array.isArray(value)) return []
++  return value.filter((entry): entry is string => typeof entry === 'string')
++}
 diff --git a/packages/host/apiproxy/tests/client-handler.spec.ts b/packages/host/apiproxy/tests/client-handler.spec.ts
-index 4130d8f210..421efda063 100644
+index 4130d8f210..9e25601e43 100644
 --- a/packages/host/apiproxy/tests/client-handler.spec.ts
 +++ b/packages/host/apiproxy/tests/client-handler.spec.ts
-@@ -89,7 +89,14 @@ function scriptedApi(overrides: {
+@@ -89,7 +89,19 @@ function scriptedApi(overrides: {
        insertSessionBefore: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
        archiveSession: r => ok(r, { archivedSessionIds: [r.payload.sessionId] }),
      },
@@ -733,21 +1340,26 @@ index 4130d8f210..421efda063 100644
 +      create: r => ok(r, { name: r.payload.name, path: `/t/skills/${r.payload.name}/SKILL.md` }),
 +      update: r => ok(r, { name: r.payload.name, path: `/t/skills/${r.payload.name}/SKILL.md` }),
 +      delete: r => ok(r, { deleted: true as const }),
++      openFolder: r => ok(r, { opened: true as const, path: '/t/skills' }),
++      preferencesRead: r => ok(r, { preferences: { enabled: [], defaultLoaded: [], categories: [] }, path: '/t/skill-preferences.json' }),
++      preferencesUpdate: r => ok(r, { saved: true as const }),
++      smartClassify: r => ok(r, { suggestions: [] }),
++      loadToSession: r => ok(r, { accepted: true as const }),
 +      ...overrides.skills,
 +    },
      agentPresets: {
        list: r => ok(r, { presets: [], authorable: false, hasDocument: false }),
        select: r => ok(r, { agentPreset: r.payload.agentPreset }),
 diff --git a/packages/host/apiproxy/tests/fetch-carrier.spec.ts b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
-index 2000f708ba..e1c949064c 100644
+index 2000f708ba..1377b5c25a 100644
 --- a/packages/host/apiproxy/tests/fetch-carrier.spec.ts
 +++ b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
-@@ -220,7 +220,19 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
+@@ -220,7 +220,34 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
      },
      skills: {
        async list(request) {
 -        return { rpcId: request.rpcId, result: { ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true }] } } }
-+        return { rpcId: request.rpcId, result: { ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true, editable: true }] } } }
++        return { rpcId: request.rpcId, result: { ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true, editable: true, enabled: true }] } } }
 +      },
 +      async read(request) {
 +        return { rpcId: request.rpcId, result: { ok: true, value: { skill: { name: request.payload.name, description: '', modelInvocable: true, userInvocable: true, body: '' } } } }
@@ -760,20 +1372,35 @@ index 2000f708ba..e1c949064c 100644
 +      },
 +      async delete(request) {
 +        return { rpcId: request.rpcId, result: { ok: true, value: { deleted: true as const } } }
++      },
++      async openFolder(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { opened: true as const, path: '/t/skills' } } }
++      },
++      async preferencesRead(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { preferences: { enabled: [], defaultLoaded: [], categories: [] }, path: '/t/skill-preferences.json' } } }
++      },
++      async preferencesUpdate(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { saved: true as const } } }
++      },
++      async smartClassify(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { suggestions: [] } } }
++      },
++      async loadToSession(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true as const } } }
        },
      },
      goals: {
-@@ -427,7 +439,7 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
+@@ -427,7 +454,7 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
    it('round-trips skill.list through the wire form', async () => {
      const c = client()
      const skills = await c.skills.list({ sessionId: 's' as never })
 -    expect(skills.result).toEqual({ ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true }] } })
-+    expect(skills.result).toEqual({ ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true, editable: true }] } })
++    expect(skills.result).toEqual({ ok: true, value: { skills: [{ name: 'commit-helper', description: 'Git commits', modelInvocable: true, editable: true, enabled: true }] } })
    })
  
    it('lets host.pickDirectory finish after the 30-second default unary deadline', async () => {
 diff --git a/packages/host/apiproxy/tests/rpc-schemas.spec.ts b/packages/host/apiproxy/tests/rpc-schemas.spec.ts
-index 66ae52f783..0988ea6391 100644
+index 66ae52f783..68706344fb 100644
 --- a/packages/host/apiproxy/tests/rpc-schemas.spec.ts
 +++ b/packages/host/apiproxy/tests/rpc-schemas.spec.ts
 @@ -415,15 +415,16 @@ describe('skills domain schemas', () => {
@@ -782,21 +1409,70 @@ index 66ae52f783..0988ea6391 100644
      const value = skillListValueSchema.parse({ skills: [
 -      { name: 'commit-helper', description: 'Git commits', whenToUse: 'when committing', modelInvocable: true },
 -      { name: 'bare', description: 'No guidance', modelInvocable: false },
-+      { name: 'commit-helper', description: 'Git commits', whenToUse: 'when committing', modelInvocable: true, editable: true },
-+      { name: 'bare', description: 'No guidance', modelInvocable: false, editable: true },
++      { name: 'commit-helper', description: 'Git commits', whenToUse: 'when committing', modelInvocable: true, editable: true, enabled: true },
++      { name: 'bare', description: 'No guidance', modelInvocable: false, editable: true, enabled: true },
      ] })
      expect(value.skills[0]?.whenToUse).toBe('when committing')
      expect(value.skills[1]?.whenToUse).toBeUndefined()
      expect(value.skills[1]?.modelInvocable).toBe(false)
 -    expect(() => skillEntrySchema.parse({ name: '', description: 'd', modelInvocable: true })).toThrow()
 -    // modelInvocable is required wire data: an entry without it fails.
-+    expect(() => skillEntrySchema.parse({ name: '', description: 'd', modelInvocable: true, editable: true })).toThrow()
-+    // modelInvocable and editable are required wire data: an entry without them fails.
++    expect(() => skillEntrySchema.parse({ name: '', description: 'd', modelInvocable: true, editable: true, enabled: true })).toThrow()
++    // modelInvocable, editable, and enabled are required wire data: an entry without them fails.
      expect(() => skillEntrySchema.parse({ name: 'n', description: 'd' })).toThrow()
 +    expect(() => skillEntrySchema.parse({ name: 'n', description: 'd', modelInvocable: true })).toThrow()
    })
  })
  
+diff --git a/packages/host/apiproxy/tests/skill-preferences.spec.ts b/packages/host/apiproxy/tests/skill-preferences.spec.ts
+new file mode 100644
+index 0000000000..b30ddb44f6
+--- /dev/null
++++ b/packages/host/apiproxy/tests/skill-preferences.spec.ts
+@@ -0,0 +1,43 @@
++// @vitest-environment node
++/**
++ * skill-preferences persistence: keywords survive the write/read round trip —
++ * a regression guard for the normalization path that used to drop them.
++ */
++import { mkdtemp, rm } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { describe, expect, it } from 'vitest'
++import { readSkillPreferences, writeSkillPreferences } from '../src/skill-preferences.ts'
++
++describe('skill-preferences', () => {
++  it('round-trips category keywords through write and read', async () => {
++    const dir = await mkdtemp(join(tmpdir(), 'dsh-skill-prefs-'))
++    try {
++      const file = join(dir, 'skill-preferences.json')
++      await writeSkillPreferences(file, {
++        version: 1,
++        enabled: [],
++        defaultLoaded: [],
++        categories: [{ id: 'design', name: '设计', keywords: ['UI', 'UX'], skills: [] }],
++      })
++      const prefs = await readSkillPreferences(file)
++      expect(prefs.categories[0]?.keywords).toEqual(['UI', 'UX'])
++      expect(prefs.categories[0]?.skills).toEqual([])
++    } finally {
++      await rm(dir, { recursive: true, force: true })
++    }
++  })
++
++  it('treats a corrupt file as empty preferences', async () => {
++    const dir = await mkdtemp(join(tmpdir(), 'dsh-skill-prefs-'))
++    try {
++      const file = join(dir, 'skill-preferences.json')
++      await writeSkillPreferences(file, 'not json' as unknown as Parameters<typeof writeSkillPreferences>[1])
++      const prefs = await readSkillPreferences(file)
++      expect(prefs.enabled).toEqual([])
++      expect(prefs.categories).toEqual([])
++    } finally {
++      await rm(dir, { recursive: true, force: true })
++    }
++  })
++})
 diff --git a/packages/skill/skill-filesystem/package.json b/packages/skill/skill-filesystem/package.json
 index 426696c4ef..4488e876f5 100644
 --- a/packages/skill/skill-filesystem/package.json

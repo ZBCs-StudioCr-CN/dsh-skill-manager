@@ -1,111 +1,81 @@
 # dsh-skill-manager
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web GUI 打造的侧边栏 **Skill 管理器**：浏览、新建、编辑、删除**用户自有**的 SKILL.md 文件——并配套完整的宿主端 CRUD RPC 链路（`skill.create / skill.read / skill.update / skill.delete`）。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 网页版 GUI 提供的可视化 **Skill 管理器**：启用、默认加载、分类、编辑你的 SKILL.md 规则，全程无需手动改文件。
 
 [English](README.md) | [中文](README.zh.md)
 
 ---
 
-## 它能做什么
+## 它解决什么问题
 
-Harness 从项目与用户根目录下发现的 SKILL.md 文件（带 YAML frontmatter 的 Markdown）加载 agent 技能。此前 GUI **无法编辑它们**——只有只读的 `skill.list` RPC。本项目补齐了缺失的管理界面：
+DeepSeek Harness 的技能就是 `~/.dsh/skills` 下的一个个 `SKILL.md` 文件（Markdown + YAML frontmatter）。技能一多，手工管理就会遇到：
 
-- 设置旁的**侧边栏按钮**（"Skill 管理"）打开**面板**，列出所有用户可调用的技能。
-- 每行显示技能名、描述与**可编辑/只读**徽标（仅用户自有技能可写）。
-- **新建**：面板内表单，含名称、描述、何时使用、模型/用户调用开关与 Markdown 正文。
-- **编辑**：读取用户自有技能的完整 frontmatter 与正文，修改后保存。
-- **删除**：确认后移除，随后宿主目录自动刷新。
+- **看不到自己有什么**——技能都是散落的文件，没有总览，也没有启用/禁用开关；
+- **没法组织**——所有技能挤在一个目录，哪个技能干什么只能靠看描述；
+- **反复重复劳动**——每次对话都要手动输入 `/xxx` 调用常用规则（站会、数据分析、API 设计……），没有"默认带上"的概念；
+- **编辑容易出错**——frontmatter 写错一个键就静默失效，而且以前根本没有图形界面可以新建技能。
 
-写入落在宿主的**用户技能根目录**（`$DSH_HOME/skills/<name>/SKILL.md`）——绝不放进项目或 bundled 根目录——并同步失效技能目录，使面向模型的 `/name` 调用入口在下一次读取时反映变更。
+`dsh-skill-manager` 把这些全部变成侧边栏里的点按操作。
 
-## 特性
+![Skill 管理面板](docs/screenshots/panel.png)
 
-| 领域 | 能力 |
+## 功能一览
+
+| 功能 | 说明 |
 | --- | --- |
-| UI | `sidebar.footer.action` 面板（与 Cordis 面板同座），宽列/rail 布局，中英双语 |
-| 宿主创作 | 新增 `skill-filesystem` writer 的 `createSkill` / `readSkill` / `updateSkill` / `removeSkill`，限定 user-dsh 根目录 |
-| 链路 | `skill.create`、`skill.read`、`skill.update`、`skill.delete` RPC 贯穿 apiproxy 全栈（契约 → schema → handler → client） |
-| 安全 | kebab-case 名称校验（名称即目录名）、新建绝不覆盖、可读的 not-found/conflict/read-only 错误、特权方法锁定 loopback |
-| 注册表 | `SkillProvider.mutate` 可选能力 + `SkillRegistry.mutator()` 宿主访问器；每次写入后触发 `skills/change` 失效 |
+| **启用 / 禁用** | 每个技能一个开关。禁用的技能从 `/name` 目录中消失，列表始终反映真实状态。 |
+| **加载到当前对话** | 一键把 `/skill-name ` 复制到剪贴板——粘贴到输入框回车即可把该技能的规则带进当前对话。**绝不会自动发送消息**。 |
+| **默认加载** | 每个技能一个开关，标记为"新对话自动带上"，常用的规则一开新会话就在。 |
+| **分类管理** | 新建 / 重命名 / 删除分类，勾选式归类，实时成员计数；一个技能可以属于多个分类。 |
+| **智能分类** | 一键把全部技能按**关键词规则**归类（本地运行、无需 API key、结果可解释）。分类可自定义关键词；首次使用自动创建 6 个默认分类（设计 / 竞品分析 / 市场分析 / 项目规划 / 开发 / 运营）。 |
+| **编辑 SKILL.md** | 面板内新建、编辑、删除用户技能：kebab-case 名校验、绝不覆盖已有技能、可读的错误提示。写入 `$DSH_HOME/skills/<name>/SKILL.md` 并即时刷新技能目录。 |
+| **打开文件夹** | 在宿主文件管理器中打开 `$DSH_HOME/skills` 目录。 |
 
-## 截图
+## 三层概念模型
 
-> TODO: 补充侧边栏按钮与打开面板的截图。
+管理器把三个容易混淆的概念分开，面板里对应三种不同的控件：
 
-## 仓库结构
+1. **启用（Enable）**——技能是否可见/可调用（持久化在 `skill-preferences.json` 的 `enabled`）。
+2. **加载到当前对话（Load into this conversation）**——按需把某个技能的规则带进**当前**对话（复制 `/name`，由你决定何时发送）。
+3. **默认加载（Default load）**——全局默认：新对话自动带上该技能（`defaultLoaded`）。
 
-```
-dsh-skill-manager/
-├── client/                     # 独立客户端插件包 @deepseek-ai/dsh-client-ui-skill-manager
-│   ├── src/client/             #   浏览器半段：面板组件、槽位 face、文案
-│   ├── src/index.ts            #   空 node 半段（纯 UI 插件）
-│   ├── src/invariant.ts        #   包级 invariant 伴生
-│   ├── tests/                  #   浏览器插件 spec（jsdom）
-│   ├── package.json            #   dsh.client 声明、peer/dev 依赖
-│   └── tsdown.config.ts        #   客户端 bundle 入口
-├── host/                       # 面向 deepseek-harness checkout 的宿主集成
-│   ├── 0001-skill-manager-host.patch   # 完整 git 补丁（29 个文件）—— 用 `git apply` 应用
-│   └── README.md               #   补丁逐个文件改了什么
-├── docs/
-│   └── INSTALL.md              # 详细安装指南（三条路径）
-├── examples/
-│   └── cordis.patch.yml        # 需要加入 web-app profile 的 bundle 行
-├── LICENSE                     # MIT
-└── README.md / README.zh.md
-```
+启用与默认加载是开关；"加载到当前对话"是一次性动作。
 
-## 快速开始
+## 安装
 
-该特性分两半：**宿主 CRUD 能力**（RPC + skill-filesystem writer）与**客户端面板**（本仓库的 `client/` 包）。客户端依赖宿主 RPC，因此先打宿主补丁，再启用插件。
+功能分两半：**宿主能力**（RPC + 偏好存储，以 git 补丁方式应用）与**客户端面板**（本仓库 `client/` 包）。客户端依赖宿主 RPC，因此先打宿主补丁。
 
 ```sh
-# 1. 在 deepseek-harness checkout 中应用宿主补丁
+# 1. 在 deepseek-harness 检出目录中应用宿主补丁
 cd deepseek-harness
 git apply /path/to/dsh-skill-manager/host/0001-skill-manager-host.patch
 
-# 2. 将新包纳入工作区（添加依赖 + tsconfig 引用，
-#    或把 client/ 复制到 packages/client/ui-skill-manager —— 见 docs/INSTALL.md）
-
-# 3. 重新构建客户端 bundle 并运行 GUI 开发服务器
+# 2. 把客户端包引入工作区（详见 docs/INSTALL.md —— 三种方式：
+#    monorepo 工作区成员 / bundle 依赖 / 独立 bundle）
 pnpm install
-pnpm --filter @deepseek-ai/dsh-client-ui-skill-manager bundle
-pnpm run dev:web   # 新增包后需重启（插件发现仅在启动时运行一次）
+pnpm run build:lib:client
+
+# 3. 重启 Web GUI 并硬刷新浏览器
+pnpm run dev:web
 ```
 
-随后打开 Web GUI：侧边栏设置上方会出现 **Skills** 按钮。
+之后侧边栏 Settings 上方会出现 **Skill 管理** 按钮。
 
-> 具体集成步骤取决于你的 checkout 组合方式（monorepo 工作区 vs 独立 profile bundle）。见 [docs/INSTALL.md](docs/INSTALL.md) 支持的三条路径。
+三种安装路线详见 [docs/INSTALL.md](docs/INSTALL.md)，宿主补丁逐文件说明见 [host/README.md](host/README.md)。
 
 ## 工作原理
 
-**宿主侧**（`host/0001-skill-manager-host.patch`）：
-
-- `@deepseek-ai/dsh-skill` — `SkillProvider` 增加可选 `mutate?: SkillProviderMutate` 能力；`SkillRegistry` 暴露 `mutator()` 以触达那个可写提供者。
-- `@deepseek-ai/dsh-skill-filesystem` — 新增 `writer.ts`，在 user-dsh 根目录实现 create/read/update/delete，`writeFileAtomic` 写入、kebab-case 名称守卫、存在性检查、每次变更后 `control.invalidate()`。
-- `@deepseek-ai/dsh-host-apiproxy` — `SkillsApi` 增加 `read/create/update/delete`；`rpc-map.ts`、`skills.schema.ts`、`fetch/handler.ts`、`fetch/client.ts`、`api-proxy.ts` 端到端接线。`skill.list` 也新增 `editable` 字段。新增 wire 错误码：`skill-not-found`、`skill-conflict`、`skill-read-only`。
-- `@deepseek-ai/dsh-client-connection` — 扩展浏览器类型、fixture 实现与 loopback `PRIVILEGED_METHODS` 围栏。
-- 客户端 slot 目录与 web-app bundle 行已重新生成/注册。
-
-**客户端侧**（`client/`）：
-
-- `src/client/index.ts` 通过 `ctx.slots.inject(... register({ name, id: 'skill-manager', locale, inject }, SkillManagerPanel))` 注册进 `sidebar.footer.action`，与 Cordis 面板完全一致。
-- 注入 face 以当前会话 id 调用 `ctx.get('connection').api.skills.*`——面板组件不直接接触 ctx 或 RPC 客户端。
-- 文案字典（zh/en）在 `src/client/locales.ts`。
+- **宿主侧**（`host/0001-skill-manager-host.patch`）：完整 apiproxy 链路的 `skill.*` RPC（`list/read/create/update/delete/openFolder/preferencesRead/preferencesUpdate/smartClassify`）；`skill-preferences` 存储（`$DSH_HOME/skill-preferences.json`）负责启用 / 默认加载 / 分类；`skill-filesystem` writer 负责技能编写；智能分类走关键词规则。
+- **客户端**（`client/`）：`@deepseek-ai/dsh-client-ui-skill-manager` 插件注册到 `sidebar.footer.action` 槽位。面板是自绘 portal 弹窗；注入的 face 调用 `connection.api.skills.*`——组件不接触 ctx 与 RPC 客户端。内置中英文案。
 
 ## 开发
 
 ```sh
 # 在 client/ 内
 pnpm --filter @deepseek-ai/dsh-client-ui-skill-manager bundle   # 构建 lib/client.js
-pnpm --filter @deepseek-ai/dsh-client-ui-skill-manager watch     # 监听模式
-pnpm exec vitest run packages/client/ui-skill-manager            # 浏览器 spec
+pnpm exec vitest run packages/client/ui-skill-manager           # 浏览器组件测试（13 个用例）
 ```
 
-## 测试
-
-- `client/tests/browser-plugin.client.spec.tsx` — 字典注册、面板列表/可编辑门控、新建表单接线（5 个用例）。
-- 宿主：`skill-filesystem-writer.spec.ts`（6 个用例），以及覆盖新 RPC 行的 apiproxy schema/carrier/handler 套件。
-
-## 许可
+## 许可证
 
 [MIT](LICENSE)

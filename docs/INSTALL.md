@@ -2,7 +2,7 @@
 
 The skill manager has two halves that must both be present:
 
-1. **Host CRUD capability** — `skill.create / skill.read / skill.update / skill.delete` RPCs plus the skill-filesystem writer. Delivered as `host/0001-skill-manager-host.patch` against a `deepseek-harness` checkout.
+1. **Host capability** — the `skill.*` RPCs (`list/read/create/update/delete/openFolder/preferencesRead/preferencesUpdate/smartClassify`), the skill-filesystem writer, and the `skill-preferences` store. Delivered as `host/0001-skill-manager-host.patch` against a `deepseek-harness` checkout.
 2. **Client panel** — the `client/` plugin package (`@deepseek-ai/dsh-client-ui-skill-manager`).
 
 This guide covers three routes. Pick the one that matches how your harness is composed.
@@ -17,7 +17,7 @@ If you run the harness from a git checkout of `deepseek-ai/deepseek-harness`, ap
 # 1. Apply the host patch
 cd deepseek-harness
 git apply /path/to/dsh-skill-manager/host/0001-skill-manager-host.patch
-git status   # review: 29 files changed, no conflicts expected on a clean master
+git status   # review: 31 files changed, no conflicts expected on a clean master
 
 # On Windows checkouts (CRLF line endings) the LF patch needs whitespace tolerance:
 git apply --ignore-space-change /path/to/dsh-skill-manager/host/0001-skill-manager-host.patch

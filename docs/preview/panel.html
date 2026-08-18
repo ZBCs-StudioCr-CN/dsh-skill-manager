@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>dsh-skill-manager — panel preview</title>
+<style>
+  body { margin: 0; background: #101216; font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: #e8eaed; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .dialog { width: 900px; height: 640px; background: #1f242b; border: 1px solid #3a4150; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 14px 44px rgba(0,0,0,.55); }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; height: 46px; border-bottom: 1px solid #2c323c; font-size: 14px; font-weight: 600; }
+  .close { color: #8a93a3; cursor: pointer; font-size: 18px; line-height: 1; }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #2c323c; }
+  .icon-btn { width: 28px; height: 28px; border-radius: 999px; border: none; background: transparent; color: #8a93a3; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  .primary { background: #2f6fed; color: #fff; border: none; border-radius: 999px; padding: 0 14px; height: 30px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+  .notice { padding: 7px 12px; font-size: 12px; color: #9aa4b2; border-bottom: 1px solid #22262d; }
+  .split { display: flex; gap: 12px; padding: 12px; flex: 1; min-height: 0; }
+  .categories { width: 240px; flex: none; border: 1px solid #2c323c; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+  .cat-title { font-size: 12px; font-weight: 600; color: #9aa4b2; }
+  .cat-input { height: 28px; border: 1px solid #3a4150; border-radius: 7px; background: #14161a; color: #e8eaed; padding: 0 8px; font-size: 12px; outline: none; }
+  .cat-add { border: 1px solid #3a4150; border-radius: 999px; background: transparent; color: #9aa4b2; height: 26px; cursor: pointer; font-size: 11px; }
+  .cat-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .cat-row { display: flex; justify-content: space-between; align-items: center; height: 30px; padding: 0 8px; border-radius: 7px; font-size: 13px; color: #c6ccd6; }
+  .cat-row.active { background: #2c3442; color: #fff; }
+  .cat-row .count { font-size: 11px; color: #7d8794; }
+  .skills { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+  .skill { border: 1px solid #2c323c; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: #1b1f26; }
+  .skill-head { display: flex; align-items: center; gap: 8px; }
+  .skill-name { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 10px; background: #2c3442; color: #9aa4b2; border-radius: 10px; padding: 0 6px; height: 18px; line-height: 18px; flex: none; }
+  .badge.default { background: #2f6fed; color: #fff; }
+  .skill-desc { font-size: 12px; color: #7d8794; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .switch { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; padding: 0; cursor: pointer; font: inherit; }
+  .switch .track { width: 34px; height: 20px; border-radius: 10px; background: #3a4150; position: relative; flex: none; transition: background .15s; }
+  .switch.on .track { background: #2e9e5b; }
+  .switch .thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .switch.on .thumb { left: 16px; }
+  .switch .label { font-size: 11px; color: #9aa4b2; }
+  .load-btn { height: 22px; border: 1px solid #3a4150; border-radius: 999px; background: transparent; color: #c6ccd6; padding: 0 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .icon-small { width: 22px; height: 22px; border: none; border-radius: 999px; background: transparent; color: #7d8794; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+  .skills::-webkit-scrollbar, .cat-list::-webkit-scrollbar { width: 8px; }
+  .skills::-webkit-scrollbar-thumb, .cat-list::-webkit-scrollbar-thumb { background: #4a5261; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="dialog">
+  <div class="header"><span>Skill 管理</span><span class="close">×</span></div>
+  <div class="toolbar">
+    <button class="icon-btn" title="打开技能文件夹">📂</button>
+    <button class="icon-btn" title="智能分类">✨</button>
+    <button class="primary">＋ 新建</button>
+  </div>
+  <div class="notice">智能分类完成：18/24 个技能已归类，其余保持未分类</div>
+  <div class="split">
+    <div class="categories">
+      <span class="cat-title">分类管理</span>
+      <input class="cat-input" placeholder="例如：设计、竞品分析、市场分析">
+      <button class="cat-add">＋ 新增分类</button>
+      <div class="cat-list">
+        <div class="cat-row active"><span>全部</span><span class="count">24</span></div>
+        <div class="cat-row"><span>未分类</span><span class="count">6</span></div>
+        <div class="cat-row"><span>设计</span><span class="count">3</span></div>
+        <div class="cat-row"><span>竞品分析</span><span class="count">2</span></div>
+        <div class="cat-row"><span>市场分析</span><span class="count">7</span></div>
+        <div class="cat-row"><span>项目规划</span><span class="count">3</span></div>
+        <div class="cat-row"><span>开发</span><span class="count">2</span></div>
+        <div class="cat-row"><span>运营</span><span class="count">1</span></div>
+      </div>
+    </div>
+    <div class="skills">
+      <div class="skill">
+        <div class="skill-head">
+          <span class="skill-name">acquisition-analysis</span>
+          <span class="badge default">默认加载</span>
+          <span class="badge">可编辑</span>
+        </div>
+        <div class="skill-desc">用于评估获客渠道或优化获客漏斗。分析19种渠道类型的规模、转化率和ROI…</div>
+        <div class="skill-actions">
+          <button class="switch on"><span class="track"><span class="thumb"></span></span><span class="label">启用</span></button>
+          <button class="load-btn">加载到当前对话</button>
+          <button class="switch on"><span class="track"><span class="thumb"></span></span><span class="label">默认加载</span></button>
+          <button class="icon-small" title="编辑">✎</button>
+          <button class="icon-small" title="删除">🗑</button>
+        </div>
+      </div>
+      <div class="skill">
+        <div class="skill-head">
+          <span class="skill-name">api-design-orchestrator</span>
+          <span class="badge">可编辑</span>
+        </div>
+        <div class="skill-desc">当需要设计API接口、制定接口规范或设计认证鉴权方案时使用…</div>
+        <div class="skill-actions">
+          <button class="switch on"><span class="track"><span class="thumb"></span></span><span class="label">启用</span></button>
+          <button class="load-btn">加载到当前对话</button>
+          <button class="switch"><span class="track"><span class="thumb"></span></span><span class="label">默认加载</span></button>
+          <button class="icon-small" title="编辑">✎</button>
+          <button class="icon-small" title="删除">🗑</button>
+        </div>
+      </div>
+      <div class="skill">
+        <div class="skill-head">
+          <span class="skill-name">agile-daily-sync</span>
+          <span class="badge">可编辑</span>
+        </div>
+        <div class="skill-desc">用于自动化每日站会流程。会前AI准备、会中人工同步、会后AI处理…</div>
+        <div class="skill-actions">
+          <button class="switch on"><span class="track"><span class="thumb"></span></span><span class="label">启用</span></button>
+          <button class="load-btn">加载到当前对话</button>
+          <button class="switch"><span class="track"><span class="thumb"></span></span><span class="label">默认加载</span></button>
+          <button class="icon-small" title="编辑">✎</button>
+          <button class="icon-small" title="删除">🗑</button>
+        </div>
+      </div>
+      <div class="skill">
+        <div class="skill-head">
+          <span class="skill-name">analysis-funnel</span>
+          <span class="badge">可编辑</span>
+        </div>
+        <div class="skill-desc">漏斗自动分析，包含完整漏斗计算、多维下钻、流失节点识别和趋势分析…</div>
+        <div class="skill-actions">
+          <button class="switch on"><span class="track"><span class="thumb"></span></span><span class="label">启用</span></button>
+          <button class="load-btn">加载到当前对话</button>
+          <button class="switch"><span class="track"><span class="thumb"></span></span><span class="label">默认加载</span></button>
+          <button class="icon-small" title="编辑">✎</button>
+          <button class="icon-small" title="删除">🗑</button>
+        </div>
+      </div>
+      <div class="skill">
+        <div class="skill-head">
+          <span class="skill-name">backend-architecture-orchestrator</span>
+          <span class="badge">可编辑</span>
+        </div>
+        <div class="skill-desc">当需要设计后端架构、选择架构模式或进行架构审查时使用…</div>
+        <div class="skill-actions">
+          <button class="switch"><span class="track"><span class="thumb"></span></span><span class="label">启用</span></button>
+          <button class="load-btn">加载到当前对话</button>
+          <button class="switch"><span class="track"><span class="thumb"></span></span><span class="label">默认加载</span></button>
+          <button class="icon-small" title="编辑">✎</button>
+          <button class="icon-small" title="删除">🗑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
