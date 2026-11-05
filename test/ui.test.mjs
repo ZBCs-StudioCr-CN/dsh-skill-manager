@@ -18,6 +18,7 @@ function catalogPayload() {
   return {
     ok: true,
     cwd: 'D:\\demo',
+    projectRoot: 'D:\\demo',
     roots: [
       { key: 'project-dsh', source: 'project-dsh', rank: 100, path: 'D:\\demo\\.dsh\\skills', readOnly: false },
       { key: 'user-dsh', source: 'user-dsh', rank: 400, path: 'C:\\Users\\x\\.dsh\\skills', readOnly: false },
@@ -28,6 +29,7 @@ function catalogPayload() {
       version: 1,
       disabled: ['legacy-skill'],
       defaultLoaded: ['sprint-planner'],
+      defaultScopes: [],
       categories: [{ id: 'planning', name: '项目规划', keywords: [], skills: ['sprint-planner'] }],
     },
     skills: [
@@ -150,7 +152,10 @@ test('界面：真实构建产物在 DOM 里渲染出技能与分类', async () 
   assert.match(text, /\/legacy-skill/, '被停用的技能也要显示')
   assert.match(text, /智能归类/, '工具栏按钮应渲染')
   assert.match(text, /项目规划/, '分类 chip 应渲染')
-  assert.match(text, /默认加载/, '默认加载标记应渲染')
+  assert.match(text, /默认·全局/, '默认加载标记应带作用域')
+  assert.match(text, /导入目录/, '应有目录导入入口')
+  assert.match(text, /导入 ZIP/, '应有 zip 导入入口')
+  assert.match(text, /本项目/, '应有默认加载作用域选择')
   assert.match(text, /2 个技能/, '统计行应显示真实数量')
   assert.ok(requests.some((request) => request.path.startsWith('/api/dsh-skill-manager/catalog')), '应请求过 catalog')
 })
@@ -188,4 +193,34 @@ test('界面：搜索过滤只留下匹配项', async () => {
   const text = container.textContent
   assert.match(text, /\/legacy-skill/, '匹配项应保留')
   assert.doesNotMatch(text, /\/sprint-planner/, '不匹配项应被过滤')
+})
+
+test('界面：切到「本项目」作用域后设默认，写入 defaultScopes', async () => {
+  const { dom, module, requests } = mountEnvironment()
+  const { container, act } = await renderPanel(module, dom)
+
+  const select = container.querySelector('select')
+  assert.ok(select, '应有作用域选择器')
+  const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value').set
+  await act(async () => {
+    setValue.call(select, 'project')
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+  })
+
+  const setDefault = [...container.querySelectorAll('button')].find((button) => button.textContent === '设默认')
+  assert.ok(setDefault, '应有设默认按钮')
+  await act(async () => {
+    setDefault.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
+
+  const posted = requests.filter((request) => request.path.startsWith('/api/dsh-skill-manager/preferences'))
+  assert.equal(posted.length, 1, '应提交一次偏好写入')
+  const body = JSON.parse(posted[0].body)
+  assert.ok(Array.isArray(body.preferences.defaultScopes), '应带 defaultScopes')
+  assert.equal(body.preferences.defaultScopes[0].kind, 'project')
+  assert.equal(body.preferences.defaultScopes[0].target, 'D:\\demo')
+  assert.deepEqual(body.preferences.defaultScopes[0].skills, ['sprint-planner'])
 })

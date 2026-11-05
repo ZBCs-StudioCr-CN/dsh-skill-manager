@@ -1,10 +1,10 @@
 /** 设置页「技能」分区：启用、默认加载、分类、智能归类、剪贴板导入与 SKILL.md 编写。 */
 
 import * as React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, setCwd } from './api'
-import type { CatalogPayload, Category, Preferences, SkillRow, Suggestion } from './api'
+import type { CatalogPayload, Category, DefaultScope, Preferences, SkillRow, Suggestion } from './api'
 
 interface Editing {
   readonly mode: 'new' | 'edit'
@@ -18,7 +18,10 @@ interface Editing {
   readonly rootKey: string
 }
 
-const EMPTY_PREFERENCES: Preferences = { disabled: [], defaultLoaded: [], categories: [] }
+const EMPTY_PREFERENCES: Preferences = { disabled: [], defaultLoaded: [], defaultScopes: [], categories: [] }
+
+/** 默认加载的作用域选择。 */
+type ScopeChoice = { kind: 'global' } | { kind: 'project' } | { kind: 'preset'; target: string }
 
 /**
  * 复制文本到剪贴板。
@@ -56,6 +59,9 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
   const [managing, setManaging] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>()
   const [busy, setBusy] = useState<string | undefined>()
+  const [scope, setScope] = useState<ScopeChoice>({ kind: 'global' })
+  const [presetName, setPresetName] = useState('standard')
+  const zipInput = useRef<HTMLInputElement | null>(null)
 
   const preferences = data?.preferences ?? EMPTY_PREFERENCES
 
@@ -108,12 +114,60 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
     await persist({ ...preferences, disabled: [...disabled] }, disabled.has(skill.name) ? `已停用 ${skill.name}` : `已启用 ${skill.name}`)
   }
 
-  /** 切换默认加载。 */
+  /** 当前选择的作用域目标：项目根或预设名。 */
+  const scopeTarget = scope.kind === 'project' ? (data?.projectRoot ?? data?.cwd ?? '') : scope.kind === 'preset' ? presetName.trim() : ''
+
+  /** 某个技能在哪些作用域里被设为默认。 */
+  const scopesOf = (name: string): string[] => {
+    const labels: string[] = []
+    if (preferences.defaultLoaded.includes(name)) labels.push('全局')
+    for (const item of preferences.defaultScopes) {
+      if (item.skills.includes(name)) labels.push(item.kind === 'project' ? '本项目' : `预设:${item.target}`)
+    }
+    return labels
+  }
+
+  /** 当前作用域下这个技能是否已设为默认。 */
+  const isDefaultInScope = (name: string): boolean => {
+    if (scope.kind === 'global') return preferences.defaultLoaded.includes(name)
+    const found = preferences.defaultScopes.find((item) => item.kind === scope.kind && item.target.toLowerCase() === scopeTarget.toLowerCase())
+    return found?.skills.includes(name) ?? false
+  }
+
+  /** 切换默认加载（写到当前选中的作用域）。 */
   const toggleDefault = async (skill: SkillRow) => {
-    const defaults = new Set(preferences.defaultLoaded)
-    if (defaults.has(skill.name)) defaults.delete(skill.name)
-    else defaults.add(skill.name)
-    await persist({ ...preferences, defaultLoaded: [...defaults] }, defaults.has(skill.name) ? `${skill.name} 将在每个新对话默认加载` : `已取消 ${skill.name} 的默认加载`)
+    if (scope.kind === 'global') {
+      const defaults = new Set(preferences.defaultLoaded)
+      if (defaults.has(skill.name)) defaults.delete(skill.name)
+      else defaults.add(skill.name)
+      await persist(
+        { ...preferences, defaultLoaded: [...defaults] },
+        defaults.has(skill.name) ? `${skill.name} 将在每个新对话默认加载` : `已取消 ${skill.name} 的全局默认加载`,
+      )
+      return
+    }
+    if (!scopeTarget) {
+      setError('先填写预设名，再设默认')
+      return
+    }
+    const list: DefaultScope[] = preferences.defaultScopes.map((item) => ({ ...item, skills: [...item.skills] }))
+    const index = list.findIndex((item) => item.kind === scope.kind && item.target.toLowerCase() === scopeTarget.toLowerCase())
+    const existing: DefaultScope = index >= 0 ? list[index] : { kind: scope.kind, target: scopeTarget, skills: [] }
+    const skills = new Set(existing.skills)
+    if (skills.has(skill.name)) skills.delete(skill.name)
+    else skills.add(skill.name)
+    const next: DefaultScope = { ...existing, skills: [...skills] }
+    if (index >= 0) {
+      if (next.skills.length === 0) list.splice(index, 1)
+      else list[index] = next
+    } else if (next.skills.length > 0) {
+      list.push(next)
+    }
+    const where = scope.kind === 'project' ? '本项目' : `预设 ${scopeTarget}`
+    await persist(
+      { ...preferences, defaultScopes: list },
+      skills.has(skill.name) ? `已在${where}默认加载 ${skill.name}` : `已取消 ${skill.name} 在${where}的默认加载`,
+    )
   }
 
   /** 把 /name 复制到剪贴板，绝不自动发送。 */
@@ -263,6 +317,48 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
     }
   }
 
+  /** 导入本地目录：优先宿主原生选择器，退化为手填绝对路径。 */
+  const importDirectory = async () => {
+    setBusy('import-dir')
+    try {
+      const picked = await api.pickDirectory()
+      let source = picked.ok && picked.path ? picked.path : undefined
+      if (!source) {
+        source = (window.prompt('输入技能目录的绝对路径（目录里要有 SKILL.md，或只含一个技能子目录）') ?? undefined) || undefined
+      }
+      if (!source) {
+        setNotice(picked.error ?? '已取消选择目录')
+        return
+      }
+      const result = await api.importDir(source, writableRoot?.key)
+      await reload()
+      setNotice(`已从目录导入 ${result.name}`)
+      setError(undefined)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  /** 处理选中的 zip 文件。 */
+  const importZipFile = async (file: File | undefined) => {
+    if (!file) return
+    setBusy('import-zip')
+    try {
+      const data = await readBase64(file)
+      const result = await api.importZip(data, writableRoot?.key)
+      await reload()
+      setNotice(`已从 ${file.name} 导入 ${result.name}`)
+      setError(undefined)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy(undefined)
+      if (zipInput.current) zipInput.current.value = ''
+    }
+  }
+
   const skills = data?.skills ?? []
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -292,6 +388,19 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
             {busy === 'classify' ? '归类中…' : '智能归类'}
           </button>
           <button type="button" className="skm-btn" onClick={() => void importFromClipboard()}>从剪贴板导入</button>
+          <button type="button" className="skm-btn" onClick={() => void importDirectory()} disabled={busy !== undefined}>
+            {busy === 'import-dir' ? '选择中…' : '导入目录'}
+          </button>
+          <button type="button" className="skm-btn" onClick={() => zipInput.current?.click()} disabled={busy !== undefined}>
+            {busy === 'import-zip' ? '导入中…' : '导入 ZIP'}
+          </button>
+          <input
+            ref={zipInput}
+            type="file"
+            accept=".zip,application/zip"
+            style={{ display: 'none' }}
+            onChange={(event) => void importZipFile(event.target.files?.[0])}
+          />
           <button
             type="button"
             className="skm-btn skm-btn--primary"
@@ -330,6 +439,43 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
             {category.name} <span className="skm-chip__count">{countOf(category.id)}</span>
           </button>
         ))}
+      </div>
+
+      <div className="skm-actions">
+        <span className="skm-notice">「设默认」写入：</span>
+        <select
+          className="skm-input"
+          style={{ maxWidth: 150 }}
+          value={scope.kind}
+          onChange={(event) => {
+            const kind = event.target.value as ScopeChoice['kind']
+            setScope(kind === 'preset' ? { kind: 'preset', target: presetName } : { kind })
+          }}
+        >
+          <option value="global">全局</option>
+          <option value="project">本项目</option>
+          <option value="preset">按预设</option>
+        </select>
+        {scope.kind === 'project' ? (
+          <span className="skm-notice">{scopeTarget || '（尚未解析出项目根）'}</span>
+        ) : null}
+        {scope.kind === 'preset' ? (
+          <input
+            className="skm-input"
+            style={{ maxWidth: 180 }}
+            value={presetName}
+            placeholder="预设名，如 standard"
+            onChange={(event) => {
+              setPresetName(event.target.value)
+              setScope({ kind: 'preset', target: event.target.value })
+            }}
+          />
+        ) : null}
+        {preferences.defaultScopes.length > 0 ? (
+          <span className="skm-notice">
+            已有作用域：{preferences.defaultScopes.map((item) => `${item.kind === 'project' ? '项目' : '预设'}:${item.target}（${item.skills.length}）`).join('、')}
+          </span>
+        ) : null}
       </div>
 
       {managing ? (
@@ -462,7 +608,7 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
               <div className="skm-desc">{skill.description || '（无描述）'}</div>
               <div className="skm-tags">
                 <span className="skm-tag">{skill.source}</span>
-                {skill.defaultLoaded ? <span className="skm-tag skm-tag--cat">默认加载</span> : null}
+                {scopesOf(skill.name).map((label) => <span className="skm-tag skm-tag--cat" key={label}>默认·{label}</span>)}
                 {skill.categoryIds.map((id) => {
                   const category = preferences.categories.find((item) => item.id === id)
                   return category ? <span className="skm-tag" key={id}>{category.name}</span> : null
@@ -473,8 +619,8 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
             <div className="skm-row__side">
               <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void loadIntoConversation(skill)}>载入对话</button>
               <button type="button" className="skm-btn skm-btn--ghost" disabled={skill.readOnly} onClick={() => void beginEdit(skill)}>编辑</button>
-              <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void toggleDefault(skill)} title="新对话默认带上">
-                {skill.defaultLoaded ? '取消默认' : '设默认'}
+              <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void toggleDefault(skill)} title="把当前作用域设为默认加载">
+                {isDefaultInScope(skill.name) ? '取消默认' : '设默认'}
               </button>
               {confirmDelete === skill.name ? (
                 <>
@@ -540,6 +686,23 @@ async function readClipboard(): Promise<string | undefined> {
   } catch {
     return undefined
   }
+}
+
+/**
+ * 把文件读成 base64（去掉 data URL 前缀），用于 zip 上传。
+ * @param file - 浏览器文件对象
+ * @returns base64 文本
+ */
+async function readBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const text = String(reader.result ?? '')
+      resolve(text.includes(',') ? text.slice(text.indexOf(',') + 1) : text)
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('读取文件失败'))
+    reader.readAsDataURL(file)
+  })
 }
 
 /**

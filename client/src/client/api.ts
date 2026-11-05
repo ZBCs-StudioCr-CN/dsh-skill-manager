@@ -17,9 +17,10 @@ export function setCwd(cwd: string | null): void {
  * 打一次宿主接口。
  * @param path - 端点路径
  * @param body - POST 请求体
+ * @param raw - 为真时不把 `ok:false` 当异常抛出，直接返回原始负载
  * @returns 响应体
  */
-async function request<T>(path: string, body?: unknown): Promise<T> {
+async function request<T>(path: string, body?: unknown, raw = false): Promise<T> {
   const query = pinnedCwd ? `${path.includes('?') ? '&' : '?'}cwd=${encodeURIComponent(pinnedCwd)}` : ''
   const response = await fetch(`${ROUTE}${path}${query}`, {
     method: body === undefined ? 'GET' : 'POST',
@@ -32,7 +33,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
     if (response.status === 403) throw new Error('宿主拒绝了本次请求（HTTP 403）：当前访问的主机不在受信列表')
     throw new Error(`接口返回了非 JSON 响应（HTTP ${response.status}）`)
   }
-  if (payload.ok === false) throw new Error(payload.error ?? '宿主返回了错误')
+  if (!raw && payload.ok === false) throw new Error(payload.error ?? '宿主返回了错误')
   return payload as T
 }
 
@@ -67,14 +68,24 @@ export interface Category {
   readonly skills: readonly string[]
 }
 
+/** 一个作用域上的默认加载集合：项目根或 agent 预设。 */
+export interface DefaultScope {
+  readonly id?: string
+  readonly kind: 'project' | 'preset'
+  readonly target: string
+  readonly skills: readonly string[]
+}
+
 export interface Preferences {
   readonly disabled: readonly string[]
   readonly defaultLoaded: readonly string[]
+  readonly defaultScopes: readonly DefaultScope[]
   readonly categories: readonly Category[]
 }
 
 export interface CatalogPayload {
   readonly cwd: string
+  readonly projectRoot: string
   readonly roots: readonly SkillRoot[]
   readonly skillRoot?: string
   readonly preferences: Preferences
@@ -100,6 +111,9 @@ export const api = {
   save: (body: SkillWrite) => request<{ path: string }>('/skill/save', body),
   remove: (name: string, rootKey: string) => request<Record<string, never>>('/skill/delete', { name, rootKey }),
   importText: (text: string, rootKey?: string) => request<{ name: string; path: string }>('/skill/import', { text, rootKey }),
+  importDir: (sourcePath: string, rootKey?: string) => request<{ name: string; path: string }>('/skill/import-dir', { sourcePath, rootKey }),
+  importZip: (data: string, rootKey?: string) => request<{ name: string; path: string }>('/skill/import-zip', { data, rootKey }),
+  pickDirectory: () => request<{ ok: boolean; kind: string; path?: string | null; error?: string }>('/pick-directory', {}, true),
   open: (rootKey?: string) => request<{ opened: boolean; path?: string }>(`/open?rootKey=${encodeURIComponent(rootKey ?? '')}`),
 }
 

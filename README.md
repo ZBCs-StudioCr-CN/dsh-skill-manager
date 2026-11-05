@@ -20,10 +20,10 @@ Skills are `SKILL.md` files (Markdown + YAML frontmatter) scattered across proje
 | Capability | Detail |
 | --- | --- |
 | **Enable / disable** | One switch per skill. Disabling is a registry policy override — **source files are never touched**, it is instantly reversible, and uninstalling the plugin restores the original state. |
-| **Default load** | Skills marked as default have their body injected into every new session's system prompt (`skill-manager:default-loaded` section). |
+| **Default load** | Skills marked as default have their body injected into the system prompt (`skill-manager:default-loaded`). Three scopes: **global**, **this project** (matched by project root) and **by preset** (e.g. `standard`); all merge. |
 | **Categories** | Create, rename, delete categories, with optional extra keywords; one skill may belong to several; live member counts. |
 | **Smart classification** | One click files unclassified skills by keyword rules. Local, explainable (shows the matched keyword), no API key. Six default categories are created on first use. |
-| **Clipboard import** | Paste a `SKILL.md` (frontmatter optional) and it becomes a skill; the name comes from `name:`, the first H1, or is slugified. |
+| **Import** | Three sources: **clipboard** (paste a whole `SKILL.md`), **directory** (host-native folder picker, or a typed absolute path), **ZIP** (pick a file in the browser, unpacked on the host; traversal paths rejected). |
 | **Load into this conversation** | Copies `/name` to the clipboard — **nothing is ever sent automatically**. |
 | **Edit SKILL.md** | Create, edit, delete from the panel; kebab-case validation, never overwrites an existing skill, preserves unmanaged frontmatter keys. |
 | **Shadow reporting** | Flags skills hidden by a higher-ranked root, so "I changed it but nothing happened" has an answer. |
@@ -96,9 +96,10 @@ Measured on 0.2.2-rc.1 desktop:
 
 ## Known limits
 
-- Default loading is a **global** prompt section: every session gets it. Per-project or per-agent scoping is not implemented yet.
+- The "by preset" scope relies on `agentPreset` in the session metadata; deployments without it fall back to global and project scopes.
 - Only the DSH skill roots that `dsh-skill-filesystem` reads are managed; Claude/Cursor/Codex directories are deliberately not merged in.
 - Deletion is permanent (no trash); the panel asks for confirmation.
+- ZIP import unpacks without inspecting scripts; review what you imported.
 
 ## License
 

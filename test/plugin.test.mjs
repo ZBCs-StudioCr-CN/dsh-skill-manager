@@ -5,18 +5,20 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { strToU8, zipSync } from 'fflate'
 
-import { apply, ROUTE_PREFIX } from '../lib/index.js'
+import { apply, defaultSkillsFor, ROUTE_PREFIX } from '../lib/index.js'
 
 /**
  * 建一个最小可用的假上下文。
- * @returns {{ ctx: object, routes: Map<string, object>, providers: object[], sections: object[] }} 环境
+ * @returns {{ ctx: object, routes: Map<string, object>, providers: object[], sections: object[], services: Map<string, any>, handlers: Map<string, Function>, expose: Function }} 环境
  */
 function fakeContext() {
   const routes = new Map()
   const providers = []
   const sections = []
   const services = new Map()
+  const handlers = new Map()
   const ctx = {
     get: (service) => services.get(service),
     effect: (factory) => {
@@ -24,7 +26,10 @@ function fakeContext() {
       return typeof dispose === 'function' ? dispose : () => {}
     },
     inject: (_names, callback) => callback(ctx),
-    on: () => () => {},
+    on: (event, callback) => {
+      handlers.set(event, callback)
+      return () => handlers.delete(event)
+    },
   }
   // cordis 把服务同时暴露成上下文属性，插件里两种取法都有；假上下文要对齐。
   const expose = (service, value) => {
@@ -58,7 +63,7 @@ function fakeContext() {
     },
   })
   expose('sessions', { list: () => [] })
-  return { ctx, routes, providers, sections }
+  return { ctx, routes, providers, sections, services, handlers, expose }
 }
 
 /**
@@ -101,12 +106,12 @@ function workspace() {
   return { cwd, dshHome }
 }
 
-test('接线：注册 1 个提供方、10 条路由、1 个默认加载段', () => {
+test('接线：注册 1 个提供方、13 条路由、1 个默认加载段', () => {
   const { cwd, dshHome } = workspace()
   const fake = fakeContext()
   apply(fake.ctx, { dshHome, cwd })
   assert.equal(fake.providers.length, 1, '宿主层应注册一个覆盖提供方')
-  assert.equal(fake.routes.size, 10, '十个端点都应注册')
+  assert.equal(fake.routes.size, 13, '十三个端点都应注册')
   assert.equal(fake.sections.length, 1, '默认加载应注册一个 prompt 段')
   assert.equal(fake.sections[0].name, 'skill-manager:default-loaded')
 })
@@ -213,4 +218,138 @@ test('默认加载：prompt 段里出现被标记技能的正文', async () => {
   assert.match(text, /按产能裁剪 backlog/)
   assert.equal(section.order, 7000)
   assert.equal(section.interpolate, false)
+})
+
+test('导入：目录与 zip 都能落成技能，越界 zip 被拒', async () => {
+  const { cwd, dshHome } = workspace()
+  const fake = fakeContext()
+  apply(fake.ctx, { dshHome, cwd })
+
+  const sourceBase = mkdtempSync(join(tmpdir(), 'skm-src-'))
+  const sourceSkill = join(sourceBase, 'wrapper', 'imported-skill')
+  mkdirSync(sourceSkill, { recursive: true })
+  writeFileSync(join(sourceSkill, 'SKILL.md'), '---\nname: imported-skill\ndescription: 从目录导入\n---\n\n目录导入的正文\n', 'utf8')
+  writeFileSync(join(sourceSkill, 'notes.md'), '附带文件\n', 'utf8')
+
+  const dirResult = await call(fake.routes, '/skill/import-dir', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { sourcePath: join(sourceBase, 'wrapper'), rootKey: 'project-dsh' },
+  })
+  assert.equal(dirResult.ok, true, dirResult.error)
+  assert.equal(dirResult.name, 'imported-skill')
+  const imported = await call(fake.routes, '/skill', { query: `?cwd=${encodeURIComponent(cwd)}&name=imported-skill&rootKey=project-dsh` })
+  assert.match(imported.content, /目录导入的正文/)
+
+  const zipData = Buffer.from(zipSync({
+    'zip-skill/SKILL.md': strToU8('---\nname: zipped-skill\ndescription: 来自 zip\n---\n\nzip 导入的正文\n'),
+    'zip-skill/reference.md': strToU8('参考\n'),
+  })).toString('base64')
+  const zipResult = await call(fake.routes, '/skill/import-zip', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { data: zipData, rootKey: 'project-dsh' },
+  })
+  assert.equal(zipResult.ok, true, zipResult.error)
+  assert.equal(zipResult.name, 'zipped-skill')
+
+  const unsafe = Buffer.from(zipSync({ '../evil/SKILL.md': strToU8('---\nname: evil\n---\n') })).toString('base64')
+  const unsafeResult = await call(fake.routes, '/skill/import-zip', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { data: unsafe, rootKey: 'project-dsh' },
+  })
+  assert.equal(unsafeResult.ok, false)
+  assert.equal(unsafeResult.code, 'import.unsafe')
+})
+
+test('目录选择器：native 能力返回宿主选中的路径', async () => {
+  const { cwd, dshHome } = workspace()
+  const fake = fakeContext()
+  fake.expose('directoryPicker', { capability: () => ({ kind: 'native', pick: async () => 'D:\\picked\\skill' }) })
+  apply(fake.ctx, { dshHome, cwd })
+  const picked = await call(fake.routes, '/pick-directory', { query: `?cwd=${encodeURIComponent(cwd)}`, body: {} })
+  assert.equal(picked.ok, true)
+  assert.equal(picked.path, 'D:\\picked\\skill')
+
+  const browseOnly = fakeContext()
+  browseOnly.expose('directoryPicker', { capability: () => ({ kind: 'browse' }) })
+  apply(browseOnly.ctx, { dshHome, cwd })
+  const refused = await call(browseOnly.routes, '/pick-directory', { query: `?cwd=${encodeURIComponent(cwd)}`, body: {} })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.kind, 'browse')
+})
+
+test('默认加载作用域：全局 + 本项目 + 本预设合并，其它项目只有全局', async () => {
+  const { cwd, dshHome } = workspace()
+  // global-skill 放在用户根，任何项目都能看到；另外两个放在项目根。
+  mkdirSync(join(dshHome, 'skills', 'global-skill'), { recursive: true })
+  writeFileSync(join(dshHome, 'skills', 'global-skill', 'SKILL.md'), '---\nname: global-skill\ndescription: 全局默认\n---\n\nglobal-skill 正文\n', 'utf8')
+  for (const name of ['project-skill', 'preset-skill']) {
+    mkdirSync(join(cwd, '.dsh', 'skills', name), { recursive: true })
+    writeFileSync(join(cwd, '.dsh', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name}\n---\n\n${name} 正文\n`, 'utf8')
+  }
+  const fake = fakeContext()
+  apply(fake.ctx, { dshHome, cwd })
+  await call(fake.routes, '/preferences', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: {
+      preferences: {
+        disabled: [],
+        defaultLoaded: ['global-skill'],
+        defaultScopes: [
+          { kind: 'project', target: cwd, skills: ['project-skill'] },
+          { kind: 'preset', target: 'standard', skills: ['preset-skill'] },
+        ],
+        categories: [],
+      },
+    },
+  })
+
+  const agentProviders = []
+  const agentSections = []
+  const agentSkills = {
+    registerProvider(create) {
+      agentProviders.push(create({ signal: new AbortController().signal, invalidate: () => {} }))
+      return () => {}
+    },
+  }
+  const agentPrompt = { section: (section) => { agentSections.push(section); return () => {} } }
+  const agentCtx = { get: (service) => (service === 'skills' ? agentSkills : service === 'systemPrompt' ? agentPrompt : undefined) }
+
+  const created = fake.handlers.get('agent/created')
+  assert.ok(created, '应订阅 agent/created')
+  created({ agent: { id: 'agent-1', session: { header: { cwd, meta: { agentPreset: 'standard' } } }, ctx: agentCtx } })
+
+  assert.equal(agentProviders.length, 1, 'agent 作用域也要注册覆盖提供方')
+  assert.equal(agentSections.length, 1, 'agent 作用域要注册默认加载段')
+  const text = agentSections[0].text({})
+  assert.match(text, /global-skill/)
+  assert.match(text, /project-skill/)
+  assert.match(text, /preset-skill/)
+
+  // 换一个项目 + 换一个预设：只剩全局默认。
+  const otherCwd = mkdtempSync(join(tmpdir(), 'skm-other-'))
+  mkdirSync(join(otherCwd, '.git'), { recursive: true })
+  const otherSections = []
+  created({
+    agent: {
+      id: 'agent-2',
+      session: { header: { cwd: otherCwd, meta: { agentPreset: 'minimal' } } },
+      ctx: { get: (service) => (service === 'skills' ? agentSkills : service === 'systemPrompt' ? { section: (section) => { otherSections.push(section); return () => {} } } : undefined) },
+    },
+  })
+  const otherText = otherSections[0].text({})
+  assert.match(otherText, /global-skill/)
+  assert.doesNotMatch(otherText, /project-skill/)
+  assert.doesNotMatch(otherText, /preset-skill/)
+})
+
+test('作用域解析：路径大小写与尾分隔符不影响匹配', () => {
+  const preferences = {
+    defaultLoaded: [],
+    defaultScopes: [
+      { id: 'p', kind: 'project', target: 'D:\\Demo\\', skills: ['a'] },
+      { id: 's', kind: 'preset', target: 'Standard', skills: ['b'] },
+    ],
+  }
+  assert.deepEqual(defaultSkillsFor(preferences, { cwd: 'd:\\demo', preset: 'standard' }), ['a', 'b'])
+  assert.deepEqual(defaultSkillsFor(preferences, { cwd: 'D:\\other', preset: 'minimal' }), [])
 })

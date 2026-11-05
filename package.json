@@ -62,7 +62,8 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.0"
+    "@deepseek-ai/schemastery": "^3.18.0",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "@deepseek-ai/schemastery": "^3.19.0",
