@@ -23,7 +23,7 @@ Skills are `SKILL.md` files (Markdown + YAML frontmatter) scattered across proje
 | **Default load** | Skills marked as default have their body injected into the system prompt (`skill-manager:default-loaded`). Three scopes: **global**, **this project** (matched by project root) and **by preset** (e.g. `standard`); all merge. |
 | **Categories** | Create, rename, delete categories, with optional extra keywords; one skill may belong to several; live member counts. |
 | **AI classification** | The model files skills by **product/project stage** (需求分析 / 商业论证 / 方案设计 / 原型美工 / 开发实现 / 测试验收 / 上线部署 / 运营增长 / 成本优化 / 协作管理 / 其他), from a fixed taxonomy — no self-invented English labels. Falls back to a stage keyword table, never plain word clustering. |
-| **AI suggestion (side channel)** | 「AI 建议」reads the skill and proposes description / when-to-use / category / translation **stored beside the skill, never overwriting the original**; the row shows it as an extra line under the original description with Accept / Dismiss. Chinese or English output. |
+| **AI suggestion (auto, side channel)** | Opening the panel **generates suggestions for every skill automatically** (on by default), stored beside the skill and **never overwriting the original description**; the row shows an extra AI line. A global 显示 AI 建议 switch plus 一键生成 / 重新生成全部 button, and per-row regeneration. Chinese or English output. |
 
 | **Import** | Three sources: **clipboard** (paste a whole SKILL.md), **directory** (host-native folder picker, or a typed absolute path), **ZIP** (pick a file in the browser, unpacked on the host; traversal paths rejected). |
 | **Load into this conversation** | Copies `/name` to the clipboard — **nothing is ever sent automatically**. |

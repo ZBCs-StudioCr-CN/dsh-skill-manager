@@ -228,3 +228,28 @@ test('界面：切到「本项目」作用域后设默认，写入 defaultScopes
   assert.equal(body.preferences.defaultScopes[0].target, 'D:\\demo')
   assert.deepEqual(body.preferences.defaultScopes[0].skills, ['sprint-planner'])
 })
+
+test('界面：默认自动补全 AI 建议，并有关闭开关', async () => {
+  const { dom, module, requests } = mountEnvironment()
+  const { container, act } = await renderPanel(module, dom)
+
+  const describes = requests.filter((request) => request.path.startsWith('/api/dsh-skill-manager/skill/describe'))
+  assert.ok(describes.length >= 2, '打开面板应自动为技能生成建议')
+  assert.match(container.textContent, /显示 AI 建议/, '应有全局开关')
+  assert.match(container.textContent, /生成 AI 建议/, '应有一键生成按钮')
+
+  const toggle = [...container.querySelectorAll('input[type="checkbox"]')].find((element) =>
+    element.closest('label')?.textContent?.includes('显示 AI 建议'),
+  )
+  assert.ok(toggle, '应找到开关')
+  await act(async () => {
+    toggle.click()
+  })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
+
+  const posted = requests.filter((request) => request.path.startsWith('/api/dsh-skill-manager/preferences'))
+  assert.equal(posted.length, 1, '切换开关应写偏好')
+  assert.equal(JSON.parse(posted[0].body).preferences.showAiSuggestions, false)
+})

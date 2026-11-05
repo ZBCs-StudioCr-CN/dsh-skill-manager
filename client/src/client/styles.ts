@@ -62,5 +62,6 @@ export const CSS = `
 .skm-ai-line{display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;margin-top:2px;padding:4px 8px;border-left:2px solid var(--dsw-alias-state-business-primary);background:var(--dsw-alias-bg-module-platform);border-radius:0 8px 8px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .skm-ai-line__label{flex:0 0 auto;font-size:11px;line-height:18px;color:var(--dsw-alias-state-business-primary);font-weight:600}
 .skm-ai-line__text{flex:1 1 220px;min-width:0;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.skm-ai-line__text--pending{color:var(--dsw-alias-label-quaternary)}
 .skm-spacer{flex:1 1 auto}
 `

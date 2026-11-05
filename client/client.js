@@ -123,7 +123,10 @@ function Panel(props) {
   const zipInput = (0, import_react.useRef)(null);
   const [suggestLang, setSuggestLang] = (0, import_react.useState)("zh");
   const [suggesting, setSuggesting] = (0, import_react.useState)();
+  const [progress, setProgress] = (0, import_react.useState)();
+  const autoRan = (0, import_react.useRef)(false);
   const preferences = data?.preferences ?? EMPTY_PREFERENCES;
+  const showSuggestions = preferences.showAiSuggestions !== false;
   const reload = (0, import_react.useCallback)(async () => {
     try {
       const payload = await api.catalog();
@@ -136,6 +139,14 @@ function Panel(props) {
   (0, import_react.useEffect)(() => {
     void reload();
   }, [reload]);
+  (0, import_react.useEffect)(() => {
+    if (!data || autoRan.current || progress) return;
+    if (data.preferences.showAiSuggestions === false) return;
+    const missing = data.skills.filter((skill) => !skill.aiSuggestion?.description);
+    if (missing.length === 0) return;
+    autoRan.current = true;
+    void generateAll(false);
+  }, [data, progress]);
   const currentSession = props?.useSessions ? props.useSessions((state) => state?.current) : void 0;
   (0, import_react.useEffect)(() => {
     if (!currentSession) return;
@@ -240,7 +251,7 @@ function Panel(props) {
     setSuggesting(skill.name);
     try {
       const result = await api.describe(skill.name, skill.rootKey, suggestLang);
-      setNotice(result.ok ? `已为 /${skill.name} 生成 AI 建议（不修改原描述）` : `AI 建议生成失败：${result.error ?? "未知原因"}`);
+      setNotice(result.ok ? `已重新生成 /${skill.name} 的 AI 建议` : `AI 建议生成失败：${result.error ?? "未知原因"}`);
       await reload();
       setError(void 0);
     } catch (failure) {
@@ -249,37 +260,31 @@ function Panel(props) {
       setSuggesting(void 0);
     }
   };
-  const acceptSuggestion = async (skill) => {
-    const suggestion = skill.aiSuggestion;
-    if (!suggestion) return;
-    setBusy(`accept:${skill.name}`);
-    try {
-      await api.updateMeta({ name: skill.name, rootKey: skill.rootKey, description: suggestion.description, whenToUse: suggestion.whenToUse });
-      const suggested = suggestion.category?.trim();
-      if (suggested) {
-        const existing = preferences.categories.find((category) => category.name === suggested || category.id === categoryId(suggested));
-        const categories = existing ? preferences.categories.map(
-          (category) => category.id === existing.id ? { ...category, skills: [.../* @__PURE__ */ new Set([...category.skills, skill.name])] } : category
-        ) : [...preferences.categories, { id: categoryId(suggested), name: suggested, keywords: [suggested], skills: [skill.name] }];
-        await persist({ ...preferences, categories });
+  const generateAll = async (force = false) => {
+    if (progress) return;
+    const targets = skills.filter((skill) => force || !skill.aiSuggestion?.description);
+    if (targets.length === 0) {
+      setNotice("所有技能都已有 AI 建议；再点一次就是全部重新生成");
+      return;
+    }
+    setProgress({ done: 0, total: targets.length });
+    setNotice(`正在生成 AI 建议 0/${targets.length}…`);
+    let failed = 0;
+    for (const [index, skill] of targets.entries()) {
+      try {
+        await api.describe(skill.name, skill.rootKey, suggestLang);
+      } catch {
+        failed += 1;
       }
-      await api.dismissSuggestion(skill.name);
-      await reload();
-      setNotice(`已采纳 /${skill.name} 的 AI 建议`);
-      setError(void 0);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setBusy(void 0);
+      setProgress({ done: index + 1, total: targets.length });
+      setNotice(`正在生成 AI 建议 ${index + 1}/${targets.length}…`);
     }
+    setProgress(void 0);
+    await reload();
+    setNotice(`AI 建议完成：${targets.length - failed}/${targets.length}${failed > 0 ? `，${failed} 个失败（模型未返回可解析 JSON）` : ""}`);
   };
-  const dismissSuggestion = async (skill) => {
-    try {
-      await api.dismissSuggestion(skill.name);
-      await reload();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    }
+  const toggleShowSuggestions = async () => {
+    await persist({ ...preferences, showAiSuggestions: !showSuggestions });
   };
   const addCategory = async () => {
     const id = categoryId("新分类");
@@ -431,7 +436,16 @@ function Panel(props) {
   }, [skills, query, filter]);
   const countOf = (id) => skills.filter((skill) => skill.categoryIds.includes(id)).length;
   const writableRoot = data?.roots.find((root) => !root.readOnly);
-  return /* @__PURE__ */ React.createElement("section", { className: "skm-section" }, /* @__PURE__ */ React.createElement("header", { className: "skm-head" }, /* @__PURE__ */ React.createElement("div", { className: "skm-head__text" }, /* @__PURE__ */ React.createElement("h3", { className: "skm-title" }, "技能管理"), /* @__PURE__ */ React.createElement("p", { className: "skm-sub" }, skills.length, " 个技能 · 根目录 ", data?.skillRoot ?? "未解析", " · 启用状态与分类保存在 ", data?.preferencesPath ?? "…")), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => void reload(), disabled: busy !== void 0 }, "刷新"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => void runClassify(), disabled: busy !== void 0 || skills.length === 0 }, busy === "classify" ? "归类中…" : "AI 智能归类"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("section", { className: "skm-section" }, /* @__PURE__ */ React.createElement("header", { className: "skm-head" }, /* @__PURE__ */ React.createElement("div", { className: "skm-head__text" }, /* @__PURE__ */ React.createElement("h3", { className: "skm-title" }, "技能管理"), /* @__PURE__ */ React.createElement("p", { className: "skm-sub" }, skills.length, " 个技能 · 根目录 ", data?.skillRoot ?? "未解析", " · 启用状态与分类保存在 ", data?.preferencesPath ?? "…")), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => void reload(), disabled: busy !== void 0 }, "刷新"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => void runClassify(), disabled: busy !== void 0 || skills.length === 0 }, busy === "classify" ? "归类中…" : "AI 智能归类"), /* @__PURE__ */ React.createElement("label", { className: "skm-check", title: "关闭后不再自动生成，也不显示建议行" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: showSuggestions, onChange: () => void toggleShowSuggestions() }), "显示 AI 建议"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      className: "skm-btn",
+      onClick: () => void generateAll(skills.some((skill) => skill.aiSuggestion?.description)),
+      disabled: progress !== void 0 || skills.length === 0
+    },
+    progress ? `生成中 ${progress.done}/${progress.total}` : skills.some((skill) => skill.aiSuggestion?.description) ? "重新生成全部 AI 建议" : "一键生成 AI 建议"
+  ), /* @__PURE__ */ React.createElement(
     "select",
     {
       className: "skm-input",
@@ -522,19 +536,19 @@ function Panel(props) {
         categoryIds: event.target.checked ? [...editing.categoryIds, category.id] : editing.categoryIds.filter((id) => id !== category.id)
       })
     }
-  ), category.name))), /* @__PURE__ */ React.createElement("div", { className: "skm-chips" }, /* @__PURE__ */ React.createElement("label", { className: "skm-check" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: editing.disableModelInvocation, onChange: (event) => setEditing({ ...editing, disableModelInvocation: event.target.checked }) }), "模型不可自动调用（disable-model-invocation）"), /* @__PURE__ */ React.createElement("label", { className: "skm-check" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: editing.userInvocable, onChange: (event) => setEditing({ ...editing, userInvocable: event.target.checked }) }), "允许用户用 /name 调用")), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void submitEditing(), disabled: busy !== void 0 }, busy === "save" ? "保存中…" : "保存"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setEditing(void 0) }, "取消"))) : null, importText !== void 0 ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, "从剪贴板导入"), /* @__PURE__ */ React.createElement("p", { className: "skm-notice" }, "粘贴一段 SKILL.md（可带 frontmatter）。技能名取 frontmatter 的 name、第一个一级标题，或自动转写。"), /* @__PURE__ */ React.createElement("textarea", { className: "skm-textarea", placeholder: "---\nname: my-skill\ndescription: 这个技能做什么\n---\n\n# 正文标题\n\n规则…", value: importText, onChange: (event) => setImportText(event.target.value) }), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "导入到", /* @__PURE__ */ React.createElement("select", { className: "skm-input", value: importRoot, onChange: (event) => setImportRoot(event.target.value) }, (data?.roots ?? []).filter((root) => !root.readOnly).map((root) => /* @__PURE__ */ React.createElement("option", { key: root.key, value: root.key }, root.source, " · ", root.path)))), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: async () => setImportText(await readClipboard() ?? "") }, "重新读取剪贴板"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void submitImport(), disabled: busy !== void 0 }, busy === "import" ? "导入中…" : "导入"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setImportText(void 0) }, "取消"))) : null, /* @__PURE__ */ React.createElement("div", { className: "skm-list" }, filtered.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "skm-empty" }, skills.length === 0 ? "还没有技能。新建一个，或从剪贴板导入。" : "没有符合筛选条件的技能。") : null, filtered.map((skill) => /* @__PURE__ */ React.createElement("div", { className: `skm-row${skill.enabled ? "" : " skm-row--off"}`, key: `${skill.rootKey}/${skill.name}` }, /* @__PURE__ */ React.createElement("div", { className: "skm-row__main" }, /* @__PURE__ */ React.createElement("div", { className: "skm-name" }, "/", skill.name), /* @__PURE__ */ React.createElement("div", { className: "skm-desc" }, skill.description || "（无描述）"), skill.aiSuggestion?.description ? /* @__PURE__ */ React.createElement("div", { className: "skm-ai-line" }, /* @__PURE__ */ React.createElement("span", { className: "skm-ai-line__label" }, "AI 建议"), /* @__PURE__ */ React.createElement("span", { className: "skm-ai-line__text" }, skill.aiSuggestion.description, skill.aiSuggestion.whenToUse ? `（何时用：${skill.aiSuggestion.whenToUse}）` : "", skill.aiSuggestion.category ? ` · 分类建议：${skill.aiSuggestion.category}` : ""), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void acceptSuggestion(skill) }, "采纳"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void dismissSuggestion(skill) }, "忽略")) : null, /* @__PURE__ */ React.createElement("div", { className: "skm-tags" }, /* @__PURE__ */ React.createElement("span", { className: "skm-tag" }, skill.source), scopesOf(skill.name).map((label) => /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--cat", key: label }, "默认·", label)), skill.categoryIds.map((id) => {
-    const category = preferences.categories.find((item) => item.id === id);
-    return category ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag", key: id }, category.name) : null;
-  }), skill.readOnly ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--warn" }, "只读") : null)), /* @__PURE__ */ React.createElement("div", { className: "skm-row__side" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void loadIntoConversation(skill) }, "载入对话"), /* @__PURE__ */ React.createElement(
+  ), category.name))), /* @__PURE__ */ React.createElement("div", { className: "skm-chips" }, /* @__PURE__ */ React.createElement("label", { className: "skm-check" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: editing.disableModelInvocation, onChange: (event) => setEditing({ ...editing, disableModelInvocation: event.target.checked }) }), "模型不可自动调用（disable-model-invocation）"), /* @__PURE__ */ React.createElement("label", { className: "skm-check" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: editing.userInvocable, onChange: (event) => setEditing({ ...editing, userInvocable: event.target.checked }) }), "允许用户用 /name 调用")), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void submitEditing(), disabled: busy !== void 0 }, busy === "save" ? "保存中…" : "保存"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setEditing(void 0) }, "取消"))) : null, importText !== void 0 ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, "从剪贴板导入"), /* @__PURE__ */ React.createElement("p", { className: "skm-notice" }, "粘贴一段 SKILL.md（可带 frontmatter）。技能名取 frontmatter 的 name、第一个一级标题，或自动转写。"), /* @__PURE__ */ React.createElement("textarea", { className: "skm-textarea", placeholder: "---\nname: my-skill\ndescription: 这个技能做什么\n---\n\n# 正文标题\n\n规则…", value: importText, onChange: (event) => setImportText(event.target.value) }), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "导入到", /* @__PURE__ */ React.createElement("select", { className: "skm-input", value: importRoot, onChange: (event) => setImportRoot(event.target.value) }, (data?.roots ?? []).filter((root) => !root.readOnly).map((root) => /* @__PURE__ */ React.createElement("option", { key: root.key, value: root.key }, root.source, " · ", root.path)))), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: async () => setImportText(await readClipboard() ?? "") }, "重新读取剪贴板"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void submitImport(), disabled: busy !== void 0 }, busy === "import" ? "导入中…" : "导入"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setImportText(void 0) }, "取消"))) : null, /* @__PURE__ */ React.createElement("div", { className: "skm-list" }, filtered.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "skm-empty" }, skills.length === 0 ? "还没有技能。新建一个，或从剪贴板导入。" : "没有符合筛选条件的技能。") : null, filtered.map((skill) => /* @__PURE__ */ React.createElement("div", { className: `skm-row${skill.enabled ? "" : " skm-row--off"}`, key: `${skill.rootKey}/${skill.name}` }, /* @__PURE__ */ React.createElement("div", { className: "skm-row__main" }, /* @__PURE__ */ React.createElement("div", { className: "skm-name" }, "/", skill.name), /* @__PURE__ */ React.createElement("div", { className: "skm-desc" }, skill.description || "（无描述）"), showSuggestions ? /* @__PURE__ */ React.createElement("div", { className: "skm-ai-line" }, /* @__PURE__ */ React.createElement("span", { className: "skm-ai-line__label" }, "AI 建议"), skill.aiSuggestion?.description ? /* @__PURE__ */ React.createElement("span", { className: "skm-ai-line__text" }, skill.aiSuggestion.description, skill.aiSuggestion.whenToUse ? `（何时用：${skill.aiSuggestion.whenToUse}）` : "", skill.aiSuggestion.category ? ` · 分类建议：${skill.aiSuggestion.category}` : "") : /* @__PURE__ */ React.createElement("span", { className: "skm-ai-line__text skm-ai-line__text--pending" }, progress ? "排队生成中…" : "还没有建议，点右侧「重新生成」"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
       className: "skm-btn skm-btn--ghost",
       onClick: () => void runSuggest(skill),
-      disabled: suggesting === skill.name || busy !== void 0
+      disabled: suggesting === skill.name || progress !== void 0
     },
-    suggesting === skill.name ? "生成中…" : "AI 建议"
-  ), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", disabled: skill.readOnly, onClick: () => void beginEdit(skill) }, "编辑"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void toggleDefault(skill), title: "把当前作用域设为默认加载" }, isDefaultInScope(skill.name) ? "取消默认" : "设默认"), confirmDelete === skill.name ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--danger", disabled: busy === skill.name, onClick: () => void removeSkill(skill) }, "确认删除"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setConfirmDelete(void 0) }, "取消")) : /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost skm-btn--danger", disabled: skill.readOnly, onClick: () => setConfirmDelete(skill.name) }, "删除"), /* @__PURE__ */ React.createElement(
+    suggesting === skill.name ? "生成中…" : "重新生成"
+  )) : null, /* @__PURE__ */ React.createElement("div", { className: "skm-tags" }, /* @__PURE__ */ React.createElement("span", { className: "skm-tag" }, skill.source), scopesOf(skill.name).map((label) => /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--cat", key: label }, "默认·", label)), skill.categoryIds.map((id) => {
+    const category = preferences.categories.find((item) => item.id === id);
+    return category ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag", key: id }, category.name) : null;
+  }), skill.readOnly ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--warn" }, "只读") : null)), /* @__PURE__ */ React.createElement("div", { className: "skm-row__side" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void loadIntoConversation(skill) }, "载入对话"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", disabled: skill.readOnly, onClick: () => void beginEdit(skill) }, "编辑"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void toggleDefault(skill), title: "把当前作用域设为默认加载" }, isDefaultInScope(skill.name) ? "取消默认" : "设默认"), confirmDelete === skill.name ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--danger", disabled: busy === skill.name, onClick: () => void removeSkill(skill) }, "确认删除"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setConfirmDelete(void 0) }, "取消")) : /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost skm-btn--danger", disabled: skill.readOnly, onClick: () => setConfirmDelete(skill.name) }, "删除"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -644,6 +658,7 @@ var CSS = `
 .skm-ai-line{display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;margin-top:2px;padding:4px 8px;border-left:2px solid var(--dsw-alias-state-business-primary);background:var(--dsw-alias-bg-module-platform);border-radius:0 8px 8px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .skm-ai-line__label{flex:0 0 auto;font-size:11px;line-height:18px;color:var(--dsw-alias-state-business-primary);font-weight:600}
 .skm-ai-line__text{flex:1 1 220px;min-width:0;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.skm-ai-line__text--pending{color:var(--dsw-alias-label-quaternary)}
 .skm-spacer{flex:1 1 auto}
 `;
 

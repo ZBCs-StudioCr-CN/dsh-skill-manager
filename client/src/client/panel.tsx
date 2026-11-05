@@ -64,8 +64,11 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
   const zipInput = useRef<HTMLInputElement | null>(null)
   const [suggestLang, setSuggestLang] = useState<'zh' | 'en'>('zh')
   const [suggesting, setSuggesting] = useState<string | undefined>()
+  const [progress, setProgress] = useState<{ done: number; total: number } | undefined>()
+  const autoRan = useRef(false)
 
   const preferences = data?.preferences ?? EMPTY_PREFERENCES
+  const showSuggestions = preferences.showAiSuggestions !== false
 
   /** 拉一次目录。 */
   const reload = useCallback(async () => {
@@ -81,6 +84,16 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
   useEffect(() => {
     void reload()
   }, [reload])
+
+  // 默认就自动补全：打开面板后，把还没有建议的技能排队生成一次（每个技能只自动跑一次）。
+  useEffect(() => {
+    if (!data || autoRan.current || progress) return
+    if (data.preferences.showAiSuggestions === false) return
+    const missing = data.skills.filter((skill) => !skill.aiSuggestion?.description)
+    if (missing.length === 0) return
+    autoRan.current = true
+    void generateAll(false)
+  }, [data, progress])
 
   // 会话切换后项目根可能变化，跟着刷新一次；拿不到就保持宿主默认。
   const currentSession = props?.useSessions ? props.useSessions((state: any) => state?.current) : undefined
@@ -207,7 +220,7 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
     setSuggesting(skill.name)
     try {
       const result = await api.describe(skill.name, skill.rootKey, suggestLang)
-      setNotice(result.ok ? `已为 /${skill.name} 生成 AI 建议（不修改原描述）` : `AI 建议生成失败：${result.error ?? '未知原因'}`)
+      setNotice(result.ok ? `已重新生成 /${skill.name} 的 AI 建议` : `AI 建议生成失败：${result.error ?? '未知原因'}`)
       await reload()
       setError(undefined)
     } catch (failure) {
@@ -217,42 +230,37 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
     }
   }
 
-  /** 采纳建议：写回 frontmatter，并把模型给的分类落成分类。 */
-  const acceptSuggestion = async (skill: SkillRow) => {
-    const suggestion = skill.aiSuggestion
-    if (!suggestion) return
-    setBusy(`accept:${skill.name}`)
-    try {
-      await api.updateMeta({ name: skill.name, rootKey: skill.rootKey, description: suggestion.description, whenToUse: suggestion.whenToUse })
-      const suggested = suggestion.category?.trim()
-      if (suggested) {
-        const existing = preferences.categories.find((category) => category.name === suggested || category.id === categoryId(suggested))
-        const categories = existing
-          ? preferences.categories.map((category) =>
-              category.id === existing.id ? { ...category, skills: [...new Set([...category.skills, skill.name])] } : category,
-            )
-          : [...preferences.categories, { id: categoryId(suggested), name: suggested, keywords: [suggested], skills: [skill.name] }]
-        await persist({ ...preferences, categories })
-      }
-      await api.dismissSuggestion(skill.name)
-      await reload()
-      setNotice(`已采纳 /${skill.name} 的 AI 建议`)
-      setError(undefined)
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure))
-    } finally {
-      setBusy(undefined)
+  /**
+   * 批量生成 AI 建议。
+   * @param force - 为真时连已有的也重新生成
+   */
+  const generateAll = async (force = false) => {
+    if (progress) return
+    const targets = skills.filter((skill) => force || !skill.aiSuggestion?.description)
+    if (targets.length === 0) {
+      setNotice('所有技能都已有 AI 建议；再点一次就是全部重新生成')
+      return
     }
+    setProgress({ done: 0, total: targets.length })
+    setNotice(`正在生成 AI 建议 0/${targets.length}…`)
+    let failed = 0
+    for (const [index, skill] of targets.entries()) {
+      try {
+        await api.describe(skill.name, skill.rootKey, suggestLang)
+      } catch {
+        failed += 1
+      }
+      setProgress({ done: index + 1, total: targets.length })
+      setNotice(`正在生成 AI 建议 ${index + 1}/${targets.length}…`)
+    }
+    setProgress(undefined)
+    await reload()
+    setNotice(`AI 建议完成：${targets.length - failed}/${targets.length}${failed > 0 ? `，${failed} 个失败（模型未返回可解析 JSON）` : ''}`)
   }
 
-  /** 丢弃一条建议。 */
-  const dismissSuggestion = async (skill: SkillRow) => {
-    try {
-      await api.dismissSuggestion(skill.name)
-      await reload()
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure))
-    }
+  /** 开关「显示 AI 建议」。 */
+  const toggleShowSuggestions = async () => {
+    await persist({ ...preferences, showAiSuggestions: !showSuggestions })
   }
 
   /** 新建分类。 */
@@ -443,6 +451,18 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
           <button type="button" className="skm-btn" onClick={() => void reload()} disabled={busy !== undefined}>刷新</button>
           <button type="button" className="skm-btn" onClick={() => void runClassify()} disabled={busy !== undefined || skills.length === 0}>
             {busy === 'classify' ? '归类中…' : 'AI 智能归类'}
+          </button>
+          <label className="skm-check" title="关闭后不再自动生成，也不显示建议行">
+            <input type="checkbox" checked={showSuggestions} onChange={() => void toggleShowSuggestions()} />
+            显示 AI 建议
+          </label>
+          <button
+            type="button"
+            className="skm-btn"
+            onClick={() => void generateAll(skills.some((skill) => skill.aiSuggestion?.description))}
+            disabled={progress !== undefined || skills.length === 0}
+          >
+            {progress ? `生成中 ${progress.done}/${progress.total}` : skills.some((skill) => skill.aiSuggestion?.description) ? '重新生成全部 AI 建议' : '一键生成 AI 建议'}
           </button>
           <select
             className="skm-input"
@@ -677,16 +697,28 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
             <div className="skm-row__main">
               <div className="skm-name">/{skill.name}</div>
               <div className="skm-desc">{skill.description || '（无描述）'}</div>
-              {skill.aiSuggestion?.description ? (
+              {showSuggestions ? (
                 <div className="skm-ai-line">
                   <span className="skm-ai-line__label">AI 建议</span>
-                  <span className="skm-ai-line__text">
-                    {skill.aiSuggestion.description}
-                    {skill.aiSuggestion.whenToUse ? `（何时用：${skill.aiSuggestion.whenToUse}）` : ''}
-                    {skill.aiSuggestion.category ? ` · 分类建议：${skill.aiSuggestion.category}` : ''}
-                  </span>
-                  <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void acceptSuggestion(skill)}>采纳</button>
-                  <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void dismissSuggestion(skill)}>忽略</button>
+                  {skill.aiSuggestion?.description ? (
+                    <span className="skm-ai-line__text">
+                      {skill.aiSuggestion.description}
+                      {skill.aiSuggestion.whenToUse ? `（何时用：${skill.aiSuggestion.whenToUse}）` : ''}
+                      {skill.aiSuggestion.category ? ` · 分类建议：${skill.aiSuggestion.category}` : ''}
+                    </span>
+                  ) : (
+                    <span className="skm-ai-line__text skm-ai-line__text--pending">
+                      {progress ? '排队生成中…' : '还没有建议，点右侧「重新生成」'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="skm-btn skm-btn--ghost"
+                    onClick={() => void runSuggest(skill)}
+                    disabled={suggesting === skill.name || progress !== undefined}
+                  >
+                    {suggesting === skill.name ? '生成中…' : '重新生成'}
+                  </button>
                 </div>
               ) : null}
               <div className="skm-tags">
@@ -701,14 +733,6 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
             </div>
             <div className="skm-row__side">
               <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void loadIntoConversation(skill)}>载入对话</button>
-              <button
-                type="button"
-                className="skm-btn skm-btn--ghost"
-                onClick={() => void runSuggest(skill)}
-                disabled={suggesting === skill.name || busy !== undefined}
-              >
-                {suggesting === skill.name ? '生成中…' : 'AI 建议'}
-              </button>
               <button type="button" className="skm-btn skm-btn--ghost" disabled={skill.readOnly} onClick={() => void beginEdit(skill)}>编辑</button>
               <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void toggleDefault(skill)} title="把当前作用域设为默认加载">
                 {isDefaultInScope(skill.name) ? '取消默认' : '设默认'}
