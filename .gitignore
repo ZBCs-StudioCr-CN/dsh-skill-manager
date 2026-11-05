@@ -20,3 +20,6 @@ Thumbs.db
 
 # temp patch artifacts
 /tmp/
+
+# local scratch
+.tmp/

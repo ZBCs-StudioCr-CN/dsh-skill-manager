@@ -92,6 +92,17 @@ node test/plugin.test.mjs  # 用假 cordis 上下文跑通接线与全部 /api �
 
 `npm test`（`node --test test/`）在受限环境里会因测试运行器要起子进程而失败，这种情况下直接 `node <file>` 逐个跑。
 
+## 验证
+
+除单测外，仓库里有三个直接打运行中宿主的脚本（会读本机 `~/.dsh/.credentials.yaml` 里的浏览器会话密钥签一个合法 cookie，只访问 127.0.0.1）：
+
+```sh
+node scripts/probe-api.mjs http://127.0.0.1:57788 /api/dsh-skill-manager/catalog D:\deepseek-harness
+node scripts/verify-live.mjs http://127.0.0.1:57788 D:\deepseek-harness   # 归类/新建/读取/停用/注册表核对/删除/还原
+```
+
+2026-11-05 在 0.2.2-rc.1 桌面版上实测通过：`catalog` 返回 25 个技能；新建与删除落在 `project-dsh` 根；把 `smoke-test-skill` 标为停用后，`/registry` 里该技能的 `provider` 变成 `skill-manager`、`modelInvocable` 变成 `false` —— 说明覆盖提供方在真实注册表里确实赢得了裁决。
+
 ## 已知限制
 
 - 「默认加载」注入的是**全局**提示词段，作用于所有会话，暂不支持按项目/按 agent 区分。

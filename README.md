@@ -77,6 +77,17 @@ node test/plugin.test.mjs  # apply() wiring and every /api endpoint via a fake c
 
 `npm test` (`node --test test/`) spawns a child test runner, which some confined environments block; run the files directly there.
 
+## Verification
+
+Besides the unit tests, three scripts hit the running host directly (they sign a valid `dsh-auth` cookie with the browser-session secret in `~/.dsh/.credentials.yaml` and only ever talk to 127.0.0.1):
+
+```sh
+node scripts/probe-api.mjs http://127.0.0.1:57788 /api/dsh-skill-manager/catalog D:\deepseek-harness
+node scripts/verify-live.mjs http://127.0.0.1:57788 D:\deepseek-harness
+```
+
+Measured on 0.2.2-rc.1 desktop: `catalog` returned 25 skills; create/delete landed in the `project-dsh` root; after disabling a skill, `/registry` reported `provider: skill-manager` with `modelInvocable: false` — the override provider really wins resolution in the live registry.
+
 ## Known limits
 
 - Default loading is a **global** prompt section: every session gets it. Per-project or per-agent scoping is not implemented yet.
