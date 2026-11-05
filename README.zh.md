@@ -94,14 +94,20 @@ node test/plugin.test.mjs  # 用假 cordis 上下文跑通接线与全部 /api �
 
 ## 验证
 
-除单测外，仓库里有三个直接打运行中宿主的脚本（会读本机 `~/.dsh/.credentials.yaml` 里的浏览器会话密钥签一个合法 cookie，只访问 127.0.0.1）：
+除单测外，仓库里有几个直接打运行中宿主的脚本（会读本机 `~/.dsh/.credentials.yaml` 里的浏览器会话密钥签一个合法 cookie，只访问 127.0.0.1）：
 
 ```sh
-node scripts/probe-api.mjs http://127.0.0.1:57788 /api/dsh-skill-manager/catalog D:\deepseek-harness
-node scripts/verify-live.mjs http://127.0.0.1:57788 D:\deepseek-harness   # 归类/新建/读取/停用/注册表核对/删除/还原
+npm test                                                                   # 18 项：宿主/端点/bundle/界面渲染
+node scripts/verify-live.mjs http://127.0.0.1:57788 D:\deepseek-harness    # 归类/新建/读取/停用/注册表核对/删除/还原
+node scripts/verify-bundle.mjs                                             # 宿主是否真的下发了浏览器半边
 ```
 
-2026-11-05 在 0.2.2-rc.1 桌面版上实测通过：`catalog` 返回 25 个技能；新建与删除落在 `project-dsh` 根；把 `smoke-test-skill` 标为停用后，`/registry` 里该技能的 `provider` 变成 `skill-manager`、`modelInvocable` 变成 `false` —— 说明覆盖提供方在真实注册表里确实赢得了裁决。
+2026-11-05 在 0.2.2-rc.1 桌面版上实测：
+
+- `/catalog` 返回 25 个技能；新建与删除落在 `project-dsh` 根；
+- 把 `smoke-test-skill` 标为停用后，`/registry` 里它的 `provider` 变成 `skill-manager`、`modelInvocable` 变成 `false` —— 覆盖提供方在真实注册表里赢得了裁决；
+- 页面外壳的模块图里已出现 `dsh-skill-manager/client.js&rev=…`，实际请求合并模块地址返回 200 且包含本插件的注册代码 —— 浏览器半边确实被下发；
+- `test/ui.test.mjs` 用 jsdom 把**真实构建产物**挂起来渲染真实目录数据，验证了标题、技能行、分类 chip、默认加载标记、搜索过滤与「点开关写回偏好」。
 
 ## 已知限制
 
