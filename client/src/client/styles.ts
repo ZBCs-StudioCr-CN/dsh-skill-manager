@@ -1,7 +1,7 @@
 /** 面板样式：全部走 DSH 设计令牌，跟随明暗主题。 */
 
 export const CSS = `
-.skm-section{max-width:820px;min-width:0;display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary)}
+.skm-section{box-sizing:border-box;width:100%;max-width:980px;margin:0 auto;height:100%;overflow-y:auto;padding:24px 24px 56px;display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary)}
 .skm-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
 .skm-head__text{flex:1 1 320px;min-width:0}
 .skm-title{margin:0;font-size:16px;line-height:24px;font-weight:600}
@@ -41,6 +41,10 @@ export const CSS = `
 .skm-switch--on .skm-switch__knob{left:17px}
 .skm-card{display:flex;flex-direction:column;gap:12px;padding:14px;border:.5px solid var(--dsw-alias-border-l3);border-radius:16px;background:var(--dsw-alias-bg-module-platform)}
 .skm-card__title{margin:0;font-size:14px;line-height:20px;font-weight:600}
+.skm-card__head{display:flex;align-items:center;gap:10px;min-width:0}
+.skm-card__head .skm-card__title{flex:1 1 auto}
+.skm-fields{display:flex;flex-direction:column;gap:10px}
+.skm-value{padding:8px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;background:var(--dsw-alias-bg-base);font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere}
 .skm-field{display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary);min-width:0}
 .skm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .skm-input,.skm-textarea{box-sizing:border-box;width:100%;border:.5px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}

@@ -1,6 +1,6 @@
 # dsh-skill-manager
 
-A visual **skill manager** for the DeepSeek Harness Web GUI: enable/disable, default loading, categories, smart classification, and clipboard import — all from the Settings panel, no hand-editing files.
+A visual **skill manager** for the DeepSeek Harness Web GUI: enable/disable, default loading, categories, smart classification, and clipboard import — all from a first-class 技能管理 entry in the sidebar, no hand-editing files.
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -38,7 +38,7 @@ npm pack
 dsh plugin --profile desktop add .\dsh-skill-manager-0.2.0.tgz
 ```
 
-Restart the DeepSeek Harness app (host plugins load at startup), then refresh the page. The panel appears under Settings → **技能**.
+Restart the DeepSeek Harness app (host plugins load at startup), then refresh the page. A first-class **技能管理** entry appears in the sidebar.
 
 Remove with `dsh plugin --profile desktop remove dsh-skill-manager`.
 

@@ -43,7 +43,7 @@ test('bundle：导出 name / inject / apply', () => {
   assert.equal(typeof module.apply, 'function')
 })
 
-test('bundle：apply 注入样式并注册 settings.section', () => {
+test('bundle：apply 注入样式并注册一级入口与主面板', () => {
   const { module, styleTag } = loadBundle()
   const registered = []
   const disposers = []
@@ -55,7 +55,7 @@ test('bundle：apply 注入样式并注册 settings.section', () => {
     },
     slots: {
       inject: (slot, callback) => {
-        assert.equal(slot, 'settings.section')
+        assert.ok(['main', 'sidebar.panellist'].includes(slot), `未预期的槽位 ${slot}`)
         callback()
       },
       register: (options, component) => {
@@ -65,12 +65,18 @@ test('bundle：apply 注入样式并注册 settings.section', () => {
     },
   }
   module.apply(ctx)
-  assert.equal(registered.length, 1)
-  assert.equal(registered[0].options.name, 'settings.section')
-  assert.equal(registered[0].options.id, 'dsh-skill-manager')
-  assert.equal(registered[0].options.order, 62)
-  assert.equal(registered[0].options.label(), '技能')
-  assert.equal(typeof registered[0].component, 'function')
+  assert.equal(registered.length, 2, '应注册主面板与侧边栏入口各一次')
+
+  const panel = registered.find((item) => item.options.name === 'main')
+  assert.ok(panel, '应有 main 面板注册')
+  assert.equal(panel.options.key, 'skill-manager')
+
+  const entry = registered.find((item) => item.options.name === 'sidebar.panellist')
+  assert.ok(entry, '应有侧边栏入口注册')
+  assert.equal(entry.options.id, 'skill-manager')
+  assert.equal(entry.options.label(), '技能管理')
+  assert.equal(typeof entry.component, 'function', '入口应是一个图标组件')
+
   assert.match(styleTag().textContent, /\.skm-section/)
   assert.equal(typeof disposers[0], 'function')
 })

@@ -106,12 +106,12 @@ function workspace() {
   return { cwd, dshHome }
 }
 
-test('接线：注册 1 个提供方、13 条路由、1 个默认加载段', () => {
+test('接线：注册 1 个提供方、15 条路由、1 个默认加载段', () => {
   const { cwd, dshHome } = workspace()
   const fake = fakeContext()
   apply(fake.ctx, { dshHome, cwd })
   assert.equal(fake.providers.length, 1, '宿主层应注册一个覆盖提供方')
-  assert.equal(fake.routes.size, 13, '十三个端点都应注册')
+  assert.equal(fake.routes.size, 15, '十五个端点都应注册')
   assert.equal(fake.sections.length, 1, '默认加载应注册一个 prompt 段')
   assert.equal(fake.sections[0].name, 'skill-manager:default-loaded')
 })
@@ -151,7 +151,7 @@ test('分类：智能归类给出建议，偏好里能存下分类', async () =>
   const { cwd, dshHome } = workspace()
   const fake = fakeContext()
   apply(fake.ctx, { dshHome, cwd })
-  const result = await call(fake.routes, '/classify', { query: `?cwd=${encodeURIComponent(cwd)}`, body: { categories: [] } })
+  const result = await call(fake.routes, '/classify', { query: `?cwd=${encodeURIComponent(cwd)}`, body: { categories: [], autoCreate: false } })
   assert.equal(result.ok, true)
   const planner = result.suggestions.find((item) => item.skill === 'sprint-planner')
   const competitor = result.suggestions.find((item) => item.skill === 'competitor-teardown')
@@ -353,3 +353,97 @@ test('作用域解析：路径大小写与尾分隔符不影响匹配', () => {
   assert.deepEqual(defaultSkillsFor(preferences, { cwd: 'd:\\demo', preset: 'standard' }), ['a', 'b'])
   assert.deepEqual(defaultSkillsFor(preferences, { cwd: 'D:\\other', preset: 'minimal' }), [])
 })
+
+test('智能归类：读正文、无分类时自动攒出分类', async () => {
+  const { cwd, dshHome } = workspace()
+  // 两个技能的正文都围绕「转化率」，用来自动成组。
+  for (const [name, body] of [
+    ['funnel-check', '检查各渠道的转化率，找出流失节点。转化率低于基线时告警。'],
+    ['conversion-lab', '对转化率做 A/B 实验，比较不同落地页的转化率。'],
+    ['unrelated-note', '整理会议纪要并归档。'],
+  ]) {
+    mkdirSync(join(cwd, '.dsh', 'skills', name), { recursive: true })
+    writeFileSync(join(cwd, '.dsh', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name}\n---\n\n${body}\n`, 'utf8')
+  }
+  const fake = fakeContext()
+  apply(fake.ctx, { dshHome, cwd })
+
+  const result = await call(fake.routes, '/classify', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { categories: [], autoCreate: true },
+  })
+  assert.equal(result.ok, true)
+  assert.ok(result.created.length > 0, '应自动新建分类')
+  assert.ok(result.categories.length > 0)
+  const grouped = result.categories.find((category) => category.skills.includes('funnel-check') && category.skills.includes('conversion-lab'))
+  assert.ok(grouped, '两个讲转化率的技能应被分到同一类')
+  assert.match(grouped.name, /转化率/)
+
+  const saved = await call(fake.routes, '/preferences', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { preferences: { ...(await readPrefs(fake, cwd)), categories: result.categories } },
+  })
+  assert.equal(saved.ok, true)
+})
+
+test('AI 描述：模型返回 JSON 时给出建议，失败时退回本地兜底', async () => {
+  const { cwd, dshHome } = workspace()
+  const fake = fakeContext()
+  const reply = JSON.stringify({ description: '把需求拆成 sprint', whenToUse: '迭代开始前', category: '排期', translated: 'Break work into sprints' })
+  fake.expose('llm', {
+    async *stream() {
+      yield { type: 'text-delta', text: reply }
+    },
+  })
+  apply(fake.ctx, { dshHome, cwd })
+
+  const ok = await call(fake.routes, '/skill/describe', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { name: 'sprint-planner', rootKey: 'project-dsh', lang: 'en' },
+  })
+  assert.equal(ok.ok, true, ok.error)
+  assert.equal(ok.source, 'llm')
+  assert.equal(ok.description, '把需求拆成 sprint')
+  assert.equal(ok.category, '排期')
+
+  const broken = fakeContext()
+  broken.expose('llm', {
+    async *stream() {
+      throw new Error('provider 未配置')
+    },
+  })
+  apply(broken.ctx, { dshHome, cwd })
+  const fallback = await call(broken.routes, '/skill/describe', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { name: 'sprint-planner', rootKey: 'project-dsh', lang: 'zh' },
+  })
+  assert.equal(fallback.ok, false)
+  assert.equal(fallback.source, 'heuristic')
+  assert.match(fallback.error, /provider 未配置/)
+})
+
+test('只改元数据：/skill/meta 更新描述但保留正文', async () => {
+  const { cwd, dshHome } = workspace()
+  const fake = fakeContext()
+  apply(fake.ctx, { dshHome, cwd })
+
+  const saved = await call(fake.routes, '/skill/meta', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { name: 'sprint-planner', rootKey: 'project-dsh', description: '新的描述', whenToUse: '迭代开始时' },
+  })
+  assert.equal(saved.ok, true)
+  const read = await call(fake.routes, '/skill', { query: `?cwd=${encodeURIComponent(cwd)}&name=sprint-planner&rootKey=project-dsh` })
+  assert.match(read.content, /新的描述/)
+  assert.match(read.content, /迭代开始时/)
+  assert.match(read.content, /按产能裁剪 backlog/, '正文必须保留')
+})
+
+/**
+ * 读当前偏好。
+ * @param {object} fake - 假上下文
+ * @param {string} cwd - 工作目录
+ * @returns {Promise<object>} 偏好
+ */
+async function readPrefs(fake, cwd) {
+  return (await call(fake.routes, '/catalog', { query: `?cwd=${encodeURIComponent(cwd)}` })).preferences
+}

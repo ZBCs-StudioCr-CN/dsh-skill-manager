@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, setCwd } from './api'
-import type { CatalogPayload, Category, DefaultScope, Preferences, SkillRow, Suggestion } from './api'
+import type { CatalogPayload, Category, DefaultScope, DescribeResult, Preferences, SkillRow } from './api'
 
 interface Editing {
   readonly mode: 'new' | 'edit'
@@ -62,6 +62,9 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
   const [scope, setScope] = useState<ScopeChoice>({ kind: 'global' })
   const [presetName, setPresetName] = useState('standard')
   const zipInput = useRef<HTMLInputElement | null>(null)
+  const [describe, setDescribe] = useState<
+    { name: string; rootKey: string; lang: 'zh' | 'en'; loading?: boolean; result?: DescribeResult } | undefined
+  >()
 
   const preferences = data?.preferences ?? EMPTY_PREFERENCES
 
@@ -176,21 +179,72 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
     setNotice(ok ? `已复制 /${skill.name}，粘贴到输入框回车即可带入本次对话` : '复制失败：浏览器拒绝了剪贴板写入')
   }
 
-  /** 智能归类：给未归类技能建议分类，采纳后写回偏好。 */
+  /** 智能归类：读正文打分，并自动攒出新分类。 */
   const runClassify = async () => {
     setBusy('classify')
     try {
-      const { suggestions } = await api.classify(preferences.categories)
-      const accepted = suggestions.filter((item: Suggestion) => item.categoryId)
-      if (accepted.length === 0) {
-        setNotice('没有找到新的可归类技能')
+      const result = await api.classify(preferences.categories)
+      const assigned = result.suggestions?.length ?? 0
+      const created = result.created?.length ?? 0
+      if (assigned === 0 && created === 0) {
+        setNotice('没有需要归类的技能')
         return
       }
-      const categories = (preferences.categories.length > 0 ? preferences.categories : defaultCategories()).map((category) => ({
-        ...category,
-        skills: [...new Set([...category.skills, ...accepted.filter((item) => item.categoryId === category.id).map((item) => item.skill)])],
-      }))
-      await persist({ ...preferences, categories }, `已按关键词归类 ${accepted.length} 个技能`)
+      await persist(
+        { ...preferences, categories: result.categories },
+        `已归类 ${assigned} 个技能${created > 0 ? `，自动新建 ${created} 个分类` : ''}`,
+      )
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  /** 打开「AI 描述」卡片。 */
+  const openDescribe = (skill: SkillRow) => setDescribe({ name: skill.name, rootKey: skill.rootKey, lang: 'zh' })
+
+  /** 生成描述建议。 */
+  const runDescribe = async () => {
+    if (!describe) return
+    setDescribe({ ...describe, loading: true })
+    try {
+      const result = await api.describe(describe.name, describe.rootKey, describe.lang)
+      setDescribe({ ...describe, loading: false, result })
+    } catch (failure) {
+      setDescribe({
+        ...describe,
+        loading: false,
+        result: { ok: false, source: 'heuristic', error: failure instanceof Error ? failure.message : String(failure) },
+      })
+    }
+  }
+
+  /** 采纳建议：写回描述/何时使用，并把模型给的分类名落成分类。 */
+  const applyDescribe = async () => {
+    if (!describe?.result) return
+    setBusy('describe-apply')
+    try {
+      await api.updateMeta({
+        name: describe.name,
+        rootKey: describe.rootKey,
+        description: describe.result.description,
+        whenToUse: describe.result.whenToUse,
+      })
+      const suggested = describe.result.category?.trim()
+      if (suggested) {
+        const existing = preferences.categories.find((category) => category.name === suggested || category.id === categoryId(suggested))
+        const categories = existing
+          ? preferences.categories.map((category) =>
+              category.id === existing.id ? { ...category, skills: [...new Set([...category.skills, describe.name])] } : category,
+            )
+          : [...preferences.categories, { id: categoryId(suggested), name: suggested, keywords: [suggested], skills: [describe.name] }]
+        await persist({ ...preferences, categories })
+      }
+      await reload()
+      setNotice(`已写入 /${describe.name} 的描述`)
+      setDescribe(undefined)
+      setError(undefined)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -480,7 +534,10 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
 
       {managing ? (
         <div className="skm-card">
-          <h4 className="skm-card__title">分类管理</h4>
+          <div className="skm-card__head">
+            <h4 className="skm-card__title">分类管理</h4>
+            <button type="button" className="skm-btn skm-btn--ghost" onClick={() => setManaging(false)} aria-label="关闭分类管理">✕ 关闭</button>
+          </div>
           <div className="skm-cats">
             {preferences.categories.length === 0 ? <p className="skm-notice">还没有分类。点「智能归类」会自动建立默认分类，也可以手动新增。</p> : null}
             {preferences.categories.map((category) => (
@@ -507,6 +564,59 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
           <div>
             <button type="button" className="skm-btn" onClick={() => void addCategory()}>新增分类</button>
           </div>
+        </div>
+      ) : null}
+
+      {describe ? (
+        <div className="skm-card">
+          <div className="skm-card__head">
+            <h4 className="skm-card__title">AI 描述 · /{describe.name}</h4>
+            <button type="button" className="skm-btn skm-btn--ghost" onClick={() => setDescribe(undefined)}>✕ 关闭</button>
+          </div>
+          <p className="skm-notice">用宿主配置的模型读这个技能的正文，给出用途描述、使用时机、建议分类，并可按语言翻译。</p>
+          <div className="skm-actions">
+            <span className="skm-notice">输出语言</span>
+            <select
+              className="skm-input"
+              style={{ maxWidth: 140 }}
+              value={describe.lang}
+              onChange={(event) => setDescribe({ ...describe, lang: event.target.value === 'en' ? 'en' : 'zh' })}
+            >
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+            <button type="button" className="skm-btn skm-btn--primary" onClick={() => void runDescribe()} disabled={describe.loading === true}>
+              {describe.loading ? '生成中…' : '生成建议'}
+            </button>
+          </div>
+          {describe.result ? (
+            <div className="skm-fields">
+              {describe.result.description ? (
+                <div className="skm-field"><span>建议描述</span><div className="skm-value">{describe.result.description}</div></div>
+              ) : null}
+              {describe.result.whenToUse ? (
+                <div className="skm-field"><span>何时使用</span><div className="skm-value">{describe.result.whenToUse}</div></div>
+              ) : null}
+              {describe.result.category ? (
+                <div className="skm-field"><span>建议分类</span><div className="skm-value">{describe.result.category}</div></div>
+              ) : null}
+              {describe.result.translated ? (
+                <div className="skm-field"><span>翻译</span><div className="skm-value">{describe.result.translated}</div></div>
+              ) : null}
+              {describe.result.error ? <p className="skm-notice skm-notice--error">{describe.result.error}</p> : null}
+              <div className="skm-actions">
+                <button
+                  type="button"
+                  className="skm-btn skm-btn--primary"
+                  onClick={() => void applyDescribe()}
+                  disabled={busy !== undefined || (!describe.result.description && !describe.result.whenToUse)}
+                >
+                  采纳并写入
+                </button>
+                <span className="skm-notice">来源：{describe.result.source === 'llm' ? '模型' : '本地兜底'}</span>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -618,6 +728,7 @@ export function Panel(props: { useSessions?: (selector: (state: any) => any) => 
             </div>
             <div className="skm-row__side">
               <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void loadIntoConversation(skill)}>载入对话</button>
+              <button type="button" className="skm-btn skm-btn--ghost" onClick={() => openDescribe(skill)}>AI 描述</button>
               <button type="button" className="skm-btn skm-btn--ghost" disabled={skill.readOnly} onClick={() => void beginEdit(skill)}>编辑</button>
               <button type="button" className="skm-btn skm-btn--ghost" onClick={() => void toggleDefault(skill)} title="把当前作用域设为默认加载">
                 {isDefaultInScope(skill.name) ? '取消默认' : '设默认'}

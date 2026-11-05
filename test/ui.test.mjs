@@ -127,9 +127,10 @@ async function renderPanel(module, dom) {
     },
   }
   module.apply(ctx)
-  assert.equal(captured.length, 1)
+  const panelEntry = captured.find((item) => item.options.name === 'main')
+  assert.ok(panelEntry, '应注册 main 面板')
 
-  const Panel = captured[0].component
+  const Panel = panelEntry.component
   const container = dom.window.document.getElementById('root')
   const root = createRoot(container)
   await act(async () => {

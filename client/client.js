@@ -36,11 +36,13 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // client/src/client/index.ts
 var index_exports = {};
 __export(index_exports, {
+  PANEL_ID: () => PANEL_ID,
   apply: () => apply,
   inject: () => inject,
   name: () => name
 });
 module.exports = __toCommonJS(index_exports);
+var import_react2 = require("react");
 
 // client/src/client/panel.tsx
 var React = __toESM(require("react"), 1);
@@ -72,7 +74,9 @@ var api = {
   catalog: () => request("/catalog"),
   registry: () => request("/registry"),
   savePreferences: (preferences) => request("/preferences", { preferences }),
-  classify: (categories) => request("/classify", { categories: [...categories] }),
+  classify: (categories) => request("/classify", { categories: [...categories], autoCreate: true }),
+  describe: (name2, rootKey, lang) => request("/skill/describe", { name: name2, rootKey, lang }, true),
+  updateMeta: (body) => request("/skill/meta", body),
   read: (name2, rootKey) => request(`/skill?name=${encodeURIComponent(name2)}&rootKey=${encodeURIComponent(rootKey)}`),
   create: (body) => request("/skill/create", body),
   save: (body) => request("/skill/save", body),
@@ -113,6 +117,7 @@ function Panel(props) {
   const [scope, setScope] = (0, import_react.useState)({ kind: "global" });
   const [presetName, setPresetName] = (0, import_react.useState)("standard");
   const zipInput = (0, import_react.useRef)(null);
+  const [describe, setDescribe] = (0, import_react.useState)();
   const preferences = data?.preferences ?? EMPTY_PREFERENCES;
   const reload = (0, import_react.useCallback)(async () => {
     try {
@@ -209,17 +214,60 @@ function Panel(props) {
   const runClassify = async () => {
     setBusy("classify");
     try {
-      const { suggestions } = await api.classify(preferences.categories);
-      const accepted = suggestions.filter((item) => item.categoryId);
-      if (accepted.length === 0) {
-        setNotice("没有找到新的可归类技能");
+      const result = await api.classify(preferences.categories);
+      const assigned = result.suggestions?.length ?? 0;
+      const created = result.created?.length ?? 0;
+      if (assigned === 0 && created === 0) {
+        setNotice("没有需要归类的技能");
         return;
       }
-      const categories = (preferences.categories.length > 0 ? preferences.categories : defaultCategories()).map((category) => ({
-        ...category,
-        skills: [.../* @__PURE__ */ new Set([...category.skills, ...accepted.filter((item) => item.categoryId === category.id).map((item) => item.skill)])]
-      }));
-      await persist({ ...preferences, categories }, `已按关键词归类 ${accepted.length} 个技能`);
+      await persist(
+        { ...preferences, categories: result.categories },
+        `已归类 ${assigned} 个技能${created > 0 ? `，自动新建 ${created} 个分类` : ""}`
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(void 0);
+    }
+  };
+  const openDescribe = (skill) => setDescribe({ name: skill.name, rootKey: skill.rootKey, lang: "zh" });
+  const runDescribe = async () => {
+    if (!describe) return;
+    setDescribe({ ...describe, loading: true });
+    try {
+      const result = await api.describe(describe.name, describe.rootKey, describe.lang);
+      setDescribe({ ...describe, loading: false, result });
+    } catch (failure) {
+      setDescribe({
+        ...describe,
+        loading: false,
+        result: { ok: false, source: "heuristic", error: failure instanceof Error ? failure.message : String(failure) }
+      });
+    }
+  };
+  const applyDescribe = async () => {
+    if (!describe?.result) return;
+    setBusy("describe-apply");
+    try {
+      await api.updateMeta({
+        name: describe.name,
+        rootKey: describe.rootKey,
+        description: describe.result.description,
+        whenToUse: describe.result.whenToUse
+      });
+      const suggested = describe.result.category?.trim();
+      if (suggested) {
+        const existing = preferences.categories.find((category) => category.name === suggested || category.id === categoryId(suggested));
+        const categories = existing ? preferences.categories.map(
+          (category) => category.id === existing.id ? { ...category, skills: [.../* @__PURE__ */ new Set([...category.skills, describe.name])] } : category
+        ) : [...preferences.categories, { id: categoryId(suggested), name: suggested, keywords: [suggested], skills: [describe.name] }];
+        await persist({ ...preferences, categories });
+      }
+      await reload();
+      setNotice(`已写入 /${describe.name} 的描述`);
+      setDescribe(void 0);
+      setError(void 0);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -429,7 +477,7 @@ function Panel(props) {
         setScope({ kind: "preset", target: event.target.value });
       }
     }
-  ) : null, preferences.defaultScopes.length > 0 ? /* @__PURE__ */ React.createElement("span", { className: "skm-notice" }, "已有作用域：", preferences.defaultScopes.map((item) => `${item.kind === "project" ? "项目" : "预设"}:${item.target}（${item.skills.length}）`).join("、")) : null), managing ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, "分类管理"), /* @__PURE__ */ React.createElement("div", { className: "skm-cats" }, preferences.categories.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "skm-notice" }, "还没有分类。点「智能归类」会自动建立默认分类，也可以手动新增。") : null, preferences.categories.map((category) => /* @__PURE__ */ React.createElement("div", { className: "skm-cat", key: category.id }, /* @__PURE__ */ React.createElement(
+  ) : null, preferences.defaultScopes.length > 0 ? /* @__PURE__ */ React.createElement("span", { className: "skm-notice" }, "已有作用域：", preferences.defaultScopes.map((item) => `${item.kind === "project" ? "项目" : "预设"}:${item.target}（${item.skills.length}）`).join("、")) : null), managing ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("div", { className: "skm-card__head" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, "分类管理"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => setManaging(false), "aria-label": "关闭分类管理" }, "✕ 关闭")), /* @__PURE__ */ React.createElement("div", { className: "skm-cats" }, preferences.categories.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "skm-notice" }, "还没有分类。点「智能归类」会自动建立默认分类，也可以手动新增。") : null, preferences.categories.map((category) => /* @__PURE__ */ React.createElement("div", { className: "skm-cat", key: category.id }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: "skm-input",
@@ -446,7 +494,26 @@ function Panel(props) {
       value: category.keywords.join(", "),
       onChange: (event) => void updateCategory({ ...category, keywords: event.target.value.split(",").map((word) => word.trim()).filter(Boolean) })
     }
-  ), /* @__PURE__ */ React.createElement("span", { className: "skm-cat__meta" }, category.skills.length, " 个技能"), /* @__PURE__ */ React.createElement("span", { className: "skm-spacer" }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--danger", onClick: () => void removeCategory(category.id) }, "删除")))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => void addCategory() }, "新增分类"))) : null, editing ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, editing.mode === "new" ? "新建技能" : `编辑 ${editing.name}`), /* @__PURE__ */ React.createElement("div", { className: "skm-grid" }, /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "技能名（kebab-case）", /* @__PURE__ */ React.createElement("input", { className: "skm-input", value: editing.name, disabled: editing.mode === "edit", onChange: (event) => setEditing({ ...editing, name: event.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "写入位置", /* @__PURE__ */ React.createElement("select", { className: "skm-input", value: editing.rootKey, onChange: (event) => setEditing({ ...editing, rootKey: event.target.value }) }, (data?.roots ?? []).filter((root) => !root.readOnly).map((root) => /* @__PURE__ */ React.createElement("option", { key: root.key, value: root.key }, root.source, " · ", root.path))))), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "一句话描述（用于路由）", /* @__PURE__ */ React.createElement("input", { className: "skm-input", value: editing.description, onChange: (event) => setEditing({ ...editing, description: event.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "何时使用（可选）", /* @__PURE__ */ React.createElement("input", { className: "skm-input", value: editing.whenToUse, onChange: (event) => setEditing({ ...editing, whenToUse: event.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "正文（SKILL.md 的 Markdown 部分）", /* @__PURE__ */ React.createElement("textarea", { className: "skm-textarea", value: editing.body, onChange: (event) => setEditing({ ...editing, body: event.target.value }) })), /* @__PURE__ */ React.createElement("div", { className: "skm-chips" }, /* @__PURE__ */ React.createElement("span", { className: "skm-field", style: { flexDirection: "row", alignItems: "center" } }, "归属分类："), preferences.categories.map((category) => /* @__PURE__ */ React.createElement("label", { className: "skm-check", key: category.id }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", { className: "skm-cat__meta" }, category.skills.length, " 个技能"), /* @__PURE__ */ React.createElement("span", { className: "skm-spacer" }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--danger", onClick: () => void removeCategory(category.id) }, "删除")))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => void addCategory() }, "新增分类"))) : null, describe ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("div", { className: "skm-card__head" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, "AI 描述 · /", describe.name), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => setDescribe(void 0) }, "✕ 关闭")), /* @__PURE__ */ React.createElement("p", { className: "skm-notice" }, "用宿主配置的模型读这个技能的正文，给出用途描述、使用时机、建议分类，并可按语言翻译。"), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("span", { className: "skm-notice" }, "输出语言"), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      className: "skm-input",
+      style: { maxWidth: 140 },
+      value: describe.lang,
+      onChange: (event) => setDescribe({ ...describe, lang: event.target.value === "en" ? "en" : "zh" })
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "zh" }, "中文"),
+    /* @__PURE__ */ React.createElement("option", { value: "en" }, "English")
+  ), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void runDescribe(), disabled: describe.loading === true }, describe.loading ? "生成中…" : "生成建议")), describe.result ? /* @__PURE__ */ React.createElement("div", { className: "skm-fields" }, describe.result.description ? /* @__PURE__ */ React.createElement("div", { className: "skm-field" }, /* @__PURE__ */ React.createElement("span", null, "建议描述"), /* @__PURE__ */ React.createElement("div", { className: "skm-value" }, describe.result.description)) : null, describe.result.whenToUse ? /* @__PURE__ */ React.createElement("div", { className: "skm-field" }, /* @__PURE__ */ React.createElement("span", null, "何时使用"), /* @__PURE__ */ React.createElement("div", { className: "skm-value" }, describe.result.whenToUse)) : null, describe.result.category ? /* @__PURE__ */ React.createElement("div", { className: "skm-field" }, /* @__PURE__ */ React.createElement("span", null, "建议分类"), /* @__PURE__ */ React.createElement("div", { className: "skm-value" }, describe.result.category)) : null, describe.result.translated ? /* @__PURE__ */ React.createElement("div", { className: "skm-field" }, /* @__PURE__ */ React.createElement("span", null, "翻译"), /* @__PURE__ */ React.createElement("div", { className: "skm-value" }, describe.result.translated)) : null, describe.result.error ? /* @__PURE__ */ React.createElement("p", { className: "skm-notice skm-notice--error" }, describe.result.error) : null, /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      className: "skm-btn skm-btn--primary",
+      onClick: () => void applyDescribe(),
+      disabled: busy !== void 0 || !describe.result.description && !describe.result.whenToUse
+    },
+    "采纳并写入"
+  ), /* @__PURE__ */ React.createElement("span", { className: "skm-notice" }, "来源：", describe.result.source === "llm" ? "模型" : "本地兜底"))) : null) : null, editing ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, editing.mode === "new" ? "新建技能" : `编辑 ${editing.name}`), /* @__PURE__ */ React.createElement("div", { className: "skm-grid" }, /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "技能名（kebab-case）", /* @__PURE__ */ React.createElement("input", { className: "skm-input", value: editing.name, disabled: editing.mode === "edit", onChange: (event) => setEditing({ ...editing, name: event.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "写入位置", /* @__PURE__ */ React.createElement("select", { className: "skm-input", value: editing.rootKey, onChange: (event) => setEditing({ ...editing, rootKey: event.target.value }) }, (data?.roots ?? []).filter((root) => !root.readOnly).map((root) => /* @__PURE__ */ React.createElement("option", { key: root.key, value: root.key }, root.source, " · ", root.path))))), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "一句话描述（用于路由）", /* @__PURE__ */ React.createElement("input", { className: "skm-input", value: editing.description, onChange: (event) => setEditing({ ...editing, description: event.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "何时使用（可选）", /* @__PURE__ */ React.createElement("input", { className: "skm-input", value: editing.whenToUse, onChange: (event) => setEditing({ ...editing, whenToUse: event.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "正文（SKILL.md 的 Markdown 部分）", /* @__PURE__ */ React.createElement("textarea", { className: "skm-textarea", value: editing.body, onChange: (event) => setEditing({ ...editing, body: event.target.value }) })), /* @__PURE__ */ React.createElement("div", { className: "skm-chips" }, /* @__PURE__ */ React.createElement("span", { className: "skm-field", style: { flexDirection: "row", alignItems: "center" } }, "归属分类："), preferences.categories.map((category) => /* @__PURE__ */ React.createElement("label", { className: "skm-check", key: category.id }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "checkbox",
@@ -459,7 +526,7 @@ function Panel(props) {
   ), category.name))), /* @__PURE__ */ React.createElement("div", { className: "skm-chips" }, /* @__PURE__ */ React.createElement("label", { className: "skm-check" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: editing.disableModelInvocation, onChange: (event) => setEditing({ ...editing, disableModelInvocation: event.target.checked }) }), "模型不可自动调用（disable-model-invocation）"), /* @__PURE__ */ React.createElement("label", { className: "skm-check" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: editing.userInvocable, onChange: (event) => setEditing({ ...editing, userInvocable: event.target.checked }) }), "允许用户用 /name 调用")), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void submitEditing(), disabled: busy !== void 0 }, busy === "save" ? "保存中…" : "保存"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setEditing(void 0) }, "取消"))) : null, importText !== void 0 ? /* @__PURE__ */ React.createElement("div", { className: "skm-card" }, /* @__PURE__ */ React.createElement("h4", { className: "skm-card__title" }, "从剪贴板导入"), /* @__PURE__ */ React.createElement("p", { className: "skm-notice" }, "粘贴一段 SKILL.md（可带 frontmatter）。技能名取 frontmatter 的 name、第一个一级标题，或自动转写。"), /* @__PURE__ */ React.createElement("textarea", { className: "skm-textarea", placeholder: "---\nname: my-skill\ndescription: 这个技能做什么\n---\n\n# 正文标题\n\n规则…", value: importText, onChange: (event) => setImportText(event.target.value) }), /* @__PURE__ */ React.createElement("label", { className: "skm-field" }, "导入到", /* @__PURE__ */ React.createElement("select", { className: "skm-input", value: importRoot, onChange: (event) => setImportRoot(event.target.value) }, (data?.roots ?? []).filter((root) => !root.readOnly).map((root) => /* @__PURE__ */ React.createElement("option", { key: root.key, value: root.key }, root.source, " · ", root.path)))), /* @__PURE__ */ React.createElement("div", { className: "skm-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: async () => setImportText(await readClipboard() ?? "") }, "重新读取剪贴板"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--primary", onClick: () => void submitImport(), disabled: busy !== void 0 }, busy === "import" ? "导入中…" : "导入"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setImportText(void 0) }, "取消"))) : null, /* @__PURE__ */ React.createElement("div", { className: "skm-list" }, filtered.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "skm-empty" }, skills.length === 0 ? "还没有技能。新建一个，或从剪贴板导入。" : "没有符合筛选条件的技能。") : null, filtered.map((skill) => /* @__PURE__ */ React.createElement("div", { className: `skm-row${skill.enabled ? "" : " skm-row--off"}`, key: `${skill.rootKey}/${skill.name}` }, /* @__PURE__ */ React.createElement("div", { className: "skm-row__main" }, /* @__PURE__ */ React.createElement("div", { className: "skm-name" }, "/", skill.name), /* @__PURE__ */ React.createElement("div", { className: "skm-desc" }, skill.description || "（无描述）"), /* @__PURE__ */ React.createElement("div", { className: "skm-tags" }, /* @__PURE__ */ React.createElement("span", { className: "skm-tag" }, skill.source), scopesOf(skill.name).map((label) => /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--cat", key: label }, "默认·", label)), skill.categoryIds.map((id) => {
     const category = preferences.categories.find((item) => item.id === id);
     return category ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag", key: id }, category.name) : null;
-  }), skill.readOnly ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--warn" }, "只读") : null)), /* @__PURE__ */ React.createElement("div", { className: "skm-row__side" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void loadIntoConversation(skill) }, "载入对话"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", disabled: skill.readOnly, onClick: () => void beginEdit(skill) }, "编辑"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void toggleDefault(skill), title: "把当前作用域设为默认加载" }, isDefaultInScope(skill.name) ? "取消默认" : "设默认"), confirmDelete === skill.name ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--danger", disabled: busy === skill.name, onClick: () => void removeSkill(skill) }, "确认删除"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setConfirmDelete(void 0) }, "取消")) : /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost skm-btn--danger", disabled: skill.readOnly, onClick: () => setConfirmDelete(skill.name) }, "删除"), /* @__PURE__ */ React.createElement(
+  }), skill.readOnly ? /* @__PURE__ */ React.createElement("span", { className: "skm-tag skm-tag--warn" }, "只读") : null)), /* @__PURE__ */ React.createElement("div", { className: "skm-row__side" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void loadIntoConversation(skill) }, "载入对话"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => openDescribe(skill) }, "AI 描述"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", disabled: skill.readOnly, onClick: () => void beginEdit(skill) }, "编辑"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost", onClick: () => void toggleDefault(skill), title: "把当前作用域设为默认加载" }, isDefaultInScope(skill.name) ? "取消默认" : "设默认"), confirmDelete === skill.name ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--danger", disabled: busy === skill.name, onClick: () => void removeSkill(skill) }, "确认删除"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn", onClick: () => setConfirmDelete(void 0) }, "取消")) : /* @__PURE__ */ React.createElement("button", { type: "button", className: "skm-btn skm-btn--ghost skm-btn--danger", disabled: skill.readOnly, onClick: () => setConfirmDelete(skill.name) }, "删除"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -505,20 +572,10 @@ async function readBase64(file) {
     reader.readAsDataURL(file);
   });
 }
-function defaultCategories() {
-  return [
-    { id: "design", name: "设计", keywords: ["设计", "ui", "ux", "界面"], skills: [] },
-    { id: "competitor-analysis", name: "竞品分析", keywords: ["竞品", "对标"], skills: [] },
-    { id: "market-analysis", name: "市场分析", keywords: ["市场", "获客", "增长"], skills: [] },
-    { id: "planning", name: "项目规划", keywords: ["规划", "排期", "sprint"], skills: [] },
-    { id: "development", name: "开发", keywords: ["开发", "代码", "api"], skills: [] },
-    { id: "operations", name: "运营", keywords: ["运营", "日报", "回顾"], skills: [] }
-  ];
-}
 
 // client/src/client/styles.ts
 var CSS = `
-.skm-section{max-width:820px;min-width:0;display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary)}
+.skm-section{box-sizing:border-box;width:100%;max-width:980px;margin:0 auto;height:100%;overflow-y:auto;padding:24px 24px 56px;display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary)}
 .skm-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
 .skm-head__text{flex:1 1 320px;min-width:0}
 .skm-title{margin:0;font-size:16px;line-height:24px;font-weight:600}
@@ -558,6 +615,10 @@ var CSS = `
 .skm-switch--on .skm-switch__knob{left:17px}
 .skm-card{display:flex;flex-direction:column;gap:12px;padding:14px;border:.5px solid var(--dsw-alias-border-l3);border-radius:16px;background:var(--dsw-alias-bg-module-platform)}
 .skm-card__title{margin:0;font-size:14px;line-height:20px;font-weight:600}
+.skm-card__head{display:flex;align-items:center;gap:10px;min-width:0}
+.skm-card__head .skm-card__title{flex:1 1 auto}
+.skm-fields{display:flex;flex-direction:column;gap:10px}
+.skm-value{padding:8px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;background:var(--dsw-alias-bg-base);font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere}
 .skm-field{display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary);min-width:0}
 .skm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .skm-input,.skm-textarea{box-sizing:border-box;width:100%;border:.5px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
@@ -577,7 +638,34 @@ var CSS = `
 
 // client/src/client/index.ts
 var name = "dsh-skill-manager";
+var PANEL_ID = "skill-manager";
 var inject = ["slots"];
+function PanelIcon(props) {
+  const size = props?.size ?? 20;
+  return (0, import_react2.createElement)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      "aria-hidden": true,
+      style: { display: "block" }
+    },
+    (0, import_react2.createElement)("path", {
+      d: "M4 5.5A2.5 2.5 0 0 1 6.5 3H19v18H6.5A2.5 2.5 0 0 1 4 18.5v-13Z",
+      stroke: "currentColor",
+      strokeWidth: props?.active ? 2 : 1.6,
+      strokeLinejoin: "round"
+    }),
+    (0, import_react2.createElement)("path", {
+      d: "M8 8h7M8 12h7M8 16h4",
+      stroke: "currentColor",
+      strokeWidth: 1.5,
+      strokeLinecap: "round"
+    })
+  );
+}
 function apply(ctx) {
   ctx.effect(() => {
     const tag = document.createElement("style");
@@ -587,16 +675,27 @@ function apply(ctx) {
     return () => tag.remove();
   }, "skill-manager: 样式");
   ctx.slots.inject(
-    "settings.section",
+    "main",
     () => ctx.slots.register(
       {
-        name: "settings.section",
-        id: "dsh-skill-manager",
-        order: 62,
-        label: () => "技能",
+        name: "main",
+        key: PANEL_ID,
         inject: () => ({})
       },
       Panel
+    )
+  );
+  ctx.slots.inject(
+    "sidebar.panellist",
+    () => ctx.slots.register(
+      {
+        name: "sidebar.panellist",
+        id: PANEL_ID,
+        order: 40,
+        label: () => "技能管理",
+        inject: () => ({})
+      },
+      PanelIcon
     )
   );
 }

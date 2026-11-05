@@ -97,15 +97,32 @@ export interface CatalogPayload {
 export interface Suggestion {
   readonly skill: string
   readonly categoryId: string | null
-  readonly score: number
-  readonly matched: readonly string[]
+  readonly score?: number
+  readonly matched?: readonly string[]
+}
+
+/** 模型（或兜底规则）给出的描述建议。 */
+export interface DescribeResult {
+  readonly ok: boolean
+  readonly source: 'llm' | 'heuristic'
+  readonly description?: string
+  readonly whenToUse?: string
+  readonly category?: string
+  readonly translated?: string
+  readonly error?: string
+  readonly lang?: 'zh' | 'en'
 }
 
 export const api = {
   catalog: () => request<CatalogPayload>('/catalog'),
   registry: () => request<{ complete: boolean; skills: Array<{ name: string; provider: string; modelInvocable: boolean }> }>('/registry'),
   savePreferences: (preferences: Preferences) => request<{ preferences: Preferences }>('/preferences', { preferences }),
-  classify: (categories: readonly Category[]) => request<{ suggestions: Suggestion[] }>('/classify', { categories: [...categories] }),
+  classify: (categories: readonly Category[]) =>
+    request<{ suggestions: Suggestion[]; categories: Category[]; created: string[] }>('/classify', { categories: [...categories], autoCreate: true }),
+  describe: (name: string, rootKey: string, lang: 'zh' | 'en') =>
+    request<DescribeResult>('/skill/describe', { name, rootKey, lang }, true),
+  updateMeta: (body: { name: string; rootKey: string; description?: string; whenToUse?: string }) =>
+    request<{ path: string }>('/skill/meta', body),
   read: (name: string, rootKey: string) => request<{ content: string; path: string }>(`/skill?name=${encodeURIComponent(name)}&rootKey=${encodeURIComponent(rootKey)}`),
   create: (body: SkillWrite) => request<{ path: string }>('/skill/create', body),
   save: (body: SkillWrite) => request<{ path: string }>('/skill/save', body),
