@@ -1,0 +1,14 @@
+# 本包的 bundle patch：安装本包即等于挂载一行。
+#
+# profile 装上本包后，`dsh plugin add` 会把 `dsh.profile.bundles` 与已安装依赖
+# 对齐；声明了 `dsh.bundle.patch` 的依赖会加入 patch 层栈。这一行挂载宿主半边，
+# 宿主半边同时也是浏览器半边的加载前提 —— 客户端模块系统只为「声明了 dsh.client
+# *且* 是活动 Loader 条目」的包提供 exports["./client"] 那份 bundle。
+#
+# 条目 id 由本包自己拥有，用包名而非裸的 `skill-manager`，以免与别的插件撞 id。
+# 默认值就是新装机器想要的；要改就走 profile 自己的 cordis.patch.yml，用 id
+# 定向 patch 覆盖本行的 config（profile 层在每个 bundle 层之后应用）。
+
+- insert:
+    - id: dsh-skill-manager
+      name: 'dsh-skill-manager'
