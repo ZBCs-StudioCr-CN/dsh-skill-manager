@@ -22,8 +22,10 @@ Skills are `SKILL.md` files (Markdown + YAML frontmatter) scattered across proje
 | **Enable / disable** | One switch per skill. Disabling is a registry policy override — **source files are never touched**, it is instantly reversible, and uninstalling the plugin restores the original state. |
 | **Default load** | Skills marked as default have their body injected into the system prompt (`skill-manager:default-loaded`). Three scopes: **global**, **this project** (matched by project root) and **by preset** (e.g. `standard`); all merge. |
 | **Categories** | Create, rename, delete categories, with optional extra keywords; one skill may belong to several; live member counts. |
-| **Smart classification** | One click files unclassified skills by keyword rules. Local, explainable (shows the matched keyword), no API key. Six default categories are created on first use. |
-| **Import** | Three sources: **clipboard** (paste a whole `SKILL.md`), **directory** (host-native folder picker, or a typed absolute path), **ZIP** (pick a file in the browser, unpacked on the host; traversal paths rejected). |
+| **AI classification** | The model files skills by **product/project stage** (需求分析 / 商业论证 / 方案设计 / 原型美工 / 开发实现 / 测试验收 / 上线部署 / 运营增长 / 成本优化 / 协作管理 / 其他), from a fixed taxonomy — no self-invented English labels. Falls back to a stage keyword table, never plain word clustering. |
+| **AI suggestion (side channel)** | 「AI 建议」reads the skill and proposes description / when-to-use / category / translation **stored beside the skill, never overwriting the original**; the row shows it as an extra line under the original description with Accept / Dismiss. Chinese or English output. |
+
+| **Import** | Three sources: **clipboard** (paste a whole SKILL.md), **directory** (host-native folder picker, or a typed absolute path), **ZIP** (pick a file in the browser, unpacked on the host; traversal paths rejected). |
 | **Load into this conversation** | Copies `/name` to the clipboard — **nothing is ever sent automatically**. |
 | **Edit SKILL.md** | Create, edit, delete from the panel; kebab-case validation, never overwrites an existing skill, preserves unmanaged frontmatter keys. |
 | **Shadow reporting** | Flags skills hidden by a higher-ranked root, so "I changed it but nothing happened" has an answer. |

@@ -200,7 +200,10 @@ test('界面：切到「本项目」作用域后设默认，写入 defaultScopes
   const { dom, module, requests } = mountEnvironment()
   const { container, act } = await renderPanel(module, dom)
 
-  const select = container.querySelector('select')
+  // 工具栏里已经有语言选择器，这里要按选项找作用域选择器。
+  const select = [...container.querySelectorAll('select')].find((element) =>
+    [...element.options].some((option) => option.value === 'project'),
+  )
   assert.ok(select, '应有作用域选择器')
   const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value').set
   await act(async () => {

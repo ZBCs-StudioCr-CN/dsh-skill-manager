@@ -1,7 +1,7 @@
 /** 用假的 cordis 上下文验证 apply() 的接线与全部 /api 端点。 */
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -106,12 +106,12 @@ function workspace() {
   return { cwd, dshHome }
 }
 
-test('接线：注册 1 个提供方、15 条路由、1 个默认加载段', () => {
+test('接线：注册 1 个提供方、16 条路由、1 个默认加载段', () => {
   const { cwd, dshHome } = workspace()
   const fake = fakeContext()
   apply(fake.ctx, { dshHome, cwd })
   assert.equal(fake.providers.length, 1, '宿主层应注册一个覆盖提供方')
-  assert.equal(fake.routes.size, 15, '十五个端点都应注册')
+  assert.equal(fake.routes.size, 16, '十六个端点都应注册')
   assert.equal(fake.sections.length, 1, '默认加载应注册一个 prompt 段')
   assert.equal(fake.sections[0].name, 'skill-manager:default-loaded')
 })
@@ -151,7 +151,7 @@ test('分类：智能归类给出建议，偏好里能存下分类', async () =>
   const { cwd, dshHome } = workspace()
   const fake = fakeContext()
   apply(fake.ctx, { dshHome, cwd })
-  const result = await call(fake.routes, '/classify', { query: `?cwd=${encodeURIComponent(cwd)}`, body: { categories: [], autoCreate: false } })
+  const result = await call(fake.routes, '/classify', { query: `?cwd=${encodeURIComponent(cwd)}`, body: { categories: [], autoCreate: false, mode: 'heuristic' } })
   assert.equal(result.ok, true)
   const planner = result.suggestions.find((item) => item.skill === 'sprint-planner')
   const competitor = result.suggestions.find((item) => item.skill === 'competitor-teardown')
@@ -354,13 +354,12 @@ test('作用域解析：路径大小写与尾分隔符不影响匹配', () => {
   assert.deepEqual(defaultSkillsFor(preferences, { cwd: 'D:\\other', preset: 'minimal' }), [])
 })
 
-test('智能归类：读正文、无分类时自动攒出分类', async () => {
+test('智能归类兜底：模型不可用时按阶段关键词归类', async () => {
   const { cwd, dshHome } = workspace()
-  // 两个技能的正文都围绕「转化率」，用来自动成组。
   for (const [name, body] of [
     ['funnel-check', '检查各渠道的转化率，找出流失节点。转化率低于基线时告警。'],
     ['conversion-lab', '对转化率做 A/B 实验，比较不同落地页的转化率。'],
-    ['unrelated-note', '整理会议纪要并归档。'],
+    ['meeting-notes', '整理会议纪要并归档。'],
   ]) {
     mkdirSync(join(cwd, '.dsh', 'skills', name), { recursive: true })
     writeFileSync(join(cwd, '.dsh', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name}\n---\n\n${body}\n`, 'utf8')
@@ -373,11 +372,12 @@ test('智能归类：读正文、无分类时自动攒出分类', async () => {
     body: { categories: [], autoCreate: true },
   })
   assert.equal(result.ok, true)
-  assert.ok(result.created.length > 0, '应自动新建分类')
-  assert.ok(result.categories.length > 0)
+  assert.equal(result.source, 'heuristic', '模型不可用时应标记为兜底')
+  assert.ok(result.created.length > 0, '应自动新建阶段分类')
   const grouped = result.categories.find((category) => category.skills.includes('funnel-check') && category.skills.includes('conversion-lab'))
-  assert.ok(grouped, '两个讲转化率的技能应被分到同一类')
-  assert.match(grouped.name, /转化率/)
+  assert.ok(grouped, '两个讲转化率的技能应被分到同一阶段')
+  assert.equal(grouped.name, '运营增长', '兜底也必须是阶段名，而不是字面词')
+  assert.ok(result.categories.find((category) => category.skills.includes('meeting-notes')), '会议纪要也要有归属')
 
   const saved = await call(fake.routes, '/preferences', {
     query: `?cwd=${encodeURIComponent(cwd)}`,
@@ -436,6 +436,81 @@ test('只改元数据：/skill/meta 更新描述但保留正文', async () => {
   assert.match(read.content, /新的描述/)
   assert.match(read.content, /迭代开始时/)
   assert.match(read.content, /按产能裁剪 backlog/, '正文必须保留')
+})
+
+test('AI 阶段分类：按模型给的阶段名建分类', async () => {
+  const { cwd, dshHome } = workspace()
+  const fake = fakeContext()
+  const reply = JSON.stringify({
+    categories: [
+      { name: '开发实现', skills: ['sprint-planner'] },
+      { name: '竞品分析', skills: ['competitor-teardown'] },
+    ],
+  })
+  fake.expose('llm', {
+    async *stream() {
+      yield { type: 'text-delta', text: reply }
+    },
+  })
+  apply(fake.ctx, { dshHome, cwd })
+
+  const result = await call(fake.routes, '/classify', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { categories: [], mode: 'ai', autoCreate: true },
+  })
+  assert.equal(result.source, 'llm')
+  const dev = result.categories.find((category) => category.name === '开发实现')
+  assert.ok(dev, '应按阶段名建分类')
+  assert.ok(dev.skills.includes('sprint-planner'))
+  assert.equal(dev.auto, true, '自动分类要打 auto 标记，便于下次重算时替换')
+  assert.ok(result.categories.find((category) => category.name === '竞品分析'))
+})
+
+test('AI 建议走旁路：不改原文，可忽略', async () => {
+  const { cwd, dshHome } = workspace()
+  const fake = fakeContext()
+  fake.expose('llm', {
+    async *stream() {
+      yield {
+        type: 'text-delta',
+        text: JSON.stringify({ description: '把需求拆成可执行的迭代', whenToUse: '排期时', category: '项目规划', translated: '' }),
+      }
+    },
+  })
+  apply(fake.ctx, { dshHome, cwd })
+
+  const described = await call(fake.routes, '/skill/describe', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { name: 'sprint-planner', rootKey: 'project-dsh', lang: 'zh' },
+  })
+  assert.equal(described.ok, true)
+
+  const catalog = await call(fake.routes, '/catalog', { query: `?cwd=${encodeURIComponent(cwd)}` })
+  const row = catalog.skills.find((skill) => skill.name === 'sprint-planner')
+  assert.equal(row.aiSuggestion?.description, '把需求拆成可执行的迭代')
+  assert.equal(row.aiSuggestion?.category, '项目规划')
+  assert.match(row.description, /把 backlog 排成 sprint plan/, '原描述必须原样保留')
+
+  const onDisk = readFileSync(join(cwd, '.dsh', 'skills', 'sprint-planner', 'SKILL.md'), 'utf8')
+  assert.match(onDisk, /把 backlog 排成 sprint plan/, '文件不能被建议改写')
+  assert.doesNotMatch(onDisk, /把需求拆成可执行的迭代/)
+
+  await call(fake.routes, '/skill/suggestion', { query: `?cwd=${encodeURIComponent(cwd)}`, body: { name: 'sprint-planner' } })
+  const after = await call(fake.routes, '/catalog', { query: `?cwd=${encodeURIComponent(cwd)}` })
+  assert.equal(after.skills.find((skill) => skill.name === 'sprint-planner').aiSuggestion, undefined)
+
+  // 采纳时才写回文件。
+  await call(fake.routes, '/skill/describe', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { name: 'sprint-planner', rootKey: 'project-dsh', lang: 'zh' },
+  })
+  await call(fake.routes, '/skill/meta', {
+    query: `?cwd=${encodeURIComponent(cwd)}`,
+    body: { name: 'sprint-planner', rootKey: 'project-dsh', description: '把需求拆成可执行的迭代' },
+  })
+  const accepted = readFileSync(join(cwd, '.dsh', 'skills', 'sprint-planner', 'SKILL.md'), 'utf8')
+  assert.match(accepted, /把需求拆成可执行的迭代/)
+  assert.match(accepted, /按产能裁剪 backlog/, '正文仍在')
 })
 
 /**

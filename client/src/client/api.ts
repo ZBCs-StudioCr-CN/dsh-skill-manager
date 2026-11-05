@@ -45,6 +45,17 @@ export interface SkillRoot {
   readonly readOnly: boolean
 }
 
+/** 模型给出的描述建议（旁路存储，不写回文件）。 */
+export interface AiSuggestion {
+  readonly description?: string
+  readonly whenToUse?: string
+  readonly category?: string
+  readonly source?: 'llm' | 'heuristic'
+  readonly lang?: 'zh' | 'en'
+  readonly at?: string
+  readonly error?: string
+}
+
 export interface SkillRow {
   readonly name: string
   readonly description: string
@@ -59,6 +70,7 @@ export interface SkillRow {
   readonly enabled: boolean
   readonly defaultLoaded: boolean
   readonly categoryIds: readonly string[]
+  readonly aiSuggestion?: AiSuggestion
 }
 
 export interface Category {
@@ -118,9 +130,13 @@ export const api = {
   registry: () => request<{ complete: boolean; skills: Array<{ name: string; provider: string; modelInvocable: boolean }> }>('/registry'),
   savePreferences: (preferences: Preferences) => request<{ preferences: Preferences }>('/preferences', { preferences }),
   classify: (categories: readonly Category[]) =>
-    request<{ suggestions: Suggestion[]; categories: Category[]; created: string[] }>('/classify', { categories: [...categories], autoCreate: true }),
+    request<{ source?: 'llm' | 'heuristic'; warning?: string; suggestions: Suggestion[]; categories: Category[]; created: string[] }>(
+      '/classify',
+      { categories: [...categories], mode: 'ai', autoCreate: true },
+    ),
   describe: (name: string, rootKey: string, lang: 'zh' | 'en') =>
     request<DescribeResult>('/skill/describe', { name, rootKey, lang }, true),
+  dismissSuggestion: (name: string) => request<Record<string, never>>('/skill/suggestion', { name }),
   updateMeta: (body: { name: string; rootKey: string; description?: string; whenToUse?: string }) =>
     request<{ path: string }>('/skill/meta', body),
   read: (name: string, rootKey: string) => request<{ content: string; path: string }>(`/skill?name=${encodeURIComponent(name)}&rootKey=${encodeURIComponent(rootKey)}`),
