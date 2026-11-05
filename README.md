@@ -10,6 +10,12 @@ Adds a **smart classification + smart usage-suggestion** layer to a [DeepSeek Ha
 
 ---
 
+![The skill manager panel: a first-class sidebar entry, with one AI suggestion line per skill](docs/screenshots/panel.png)
+
+Filtered by the 运营增长 stage — the result of smart classification:
+
+![Filtered by stage](docs/screenshots/panel-category.png)
+
 ## Why this exists
 
 With a handful of skills, `/name` is enough. With twenty or thirty, the problem changes:

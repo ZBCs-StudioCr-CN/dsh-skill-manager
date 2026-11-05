@@ -10,6 +10,12 @@
 
 ---
 
+![技能管理面板：左侧一级入口，右侧每个技能下方的 AI 建议行](docs/screenshots/panel.png)
+
+按「运营增长」阶段筛选 —— 智能分类的效果：
+
+![按阶段筛选](docs/screenshots/panel-category.png)
+
 ## 为什么需要它
 
 Skill 少的时候，`/name` 就够了；一旦攒到二三十个，问题会变成另一种：
