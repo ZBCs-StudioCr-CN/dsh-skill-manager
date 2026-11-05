@@ -1,7 +1,7 @@
 {
   "name": "dsh-skill-manager",
-  "version": "0.2.0",
-  "description": "Skill manager for DeepSeek Harness: categories, smart classification, clipboard import, default-load policy and SKILL.md authoring, from a Settings panel.",
+  "version": "0.3.0",
+  "description": "Smart classification and usage suggestions for a DeepSeek Harness skill library: find and manage the right skill once you have many.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/deepseek-ai/DeepSeek-Harness-Skill-Manager.git"
@@ -19,7 +19,8 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "node client/build.mjs",
